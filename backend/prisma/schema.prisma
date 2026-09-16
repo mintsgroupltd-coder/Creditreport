@@ -1,0 +1,181 @@
+// Data model for the UK Credit Report Analyzer.
+// Design notes live in the root README under "How the data model fits together".
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Bureau {
+  EXPERIAN
+  EQUIFAX
+  TRANSUNION
+  UNKNOWN
+}
+
+enum AccountStatus {
+  ACTIVE
+  SETTLED
+  DEFAULT
+  SATISFIED
+  CLOSED
+  UNKNOWN
+}
+
+enum EventType {
+  DEFAULT
+  ARREARS
+  CCJ
+  SEARCH
+  ELECTORAL_ROLL
+  LINKED_ADDRESS
+}
+
+enum AlertType {
+  DOB_MISMATCH
+  NAME_VARIATION
+  MIXED_FILE_RISK
+  DUPLICATE_ACCOUNT
+  HIGH_UTILISATION
+  UNSATISFIED_CCJ
+  ACTIVE_DEFAULT
+  SEARCH_VOLUME
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  reports      Report[]
+}
+
+/// One uploaded/parsed credit report belonging to a user.
+model Report {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bureau         Bureau   @default(UNKNOWN)
+  sourceFileName String
+  sourceFileType String // "pdf" | "csv"
+  uploadedAt     DateTime @default(now())
+
+  // Personal details as read off the report (used for anomaly detection)
+  applicantName String?
+  dateOfBirth   DateTime?
+  addresses     Json? // array of { line, from, to, source }
+
+  // Raw extracted text, kept so re-analysis doesn't require re-uploading
+  rawText String @db.Text
+
+  // Computed once at upload time by the analytics engine and persisted so
+  // the report detail page can show them without re-parsing the raw text.
+  riskLevel        String? // "LOW" | "MEDIUM" | "HIGH" | "SEVERE"
+  summary          String? @db.Text
+  suggestedActions Json? // string[]
+
+  accounts Account[]
+  events   Event[]
+  alerts   Alert[]
+
+  @@index([userId])
+}
+
+/// A lender/creditor, deduplicated by normalized name so the same
+/// creditor appearing under slightly different spellings collapses to one row.
+model Lender {
+  id             String    @id @default(cuid())
+  name           String
+  normalizedName String    @unique
+  // User-entered correspondence address for this lender/agent — we
+  // deliberately don't ship a hardcoded directory of creditor addresses
+  // (they change, and getting one wrong misdirects a dispute letter), so
+  // this starts blank and the user fills it in from their own statement.
+  contactAddress String?   @db.Text
+  accounts       Account[]
+}
+
+/// A single credit account/facility on a report (a credit card, loan,
+/// utility account, CCJ-linked facility, etc). Mirrors one "C#" block
+/// on an Experian-style report or the equivalent on Equifax/TransUnion.
+model Account {
+  id       String  @id @default(cuid())
+  reportId String
+  report   Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  lenderId String
+  lender   Lender  @relation(fields: [lenderId], references: [id])
+
+  bureauRef      String? // the bureau's own reference, e.g. "C12"
+  accountType    String // e.g. "Credit card", "Water", "Current account", "Loan"
+  status         AccountStatus @default(UNKNOWN)
+  openedDate     DateTime?
+  currentBalance Decimal?      @db.Decimal(12, 2)
+  creditLimit    Decimal?      @db.Decimal(12, 2)
+
+  defaultDate      DateTime?
+  defaultBalance   Decimal?  @db.Decimal(12, 2)
+  satisfactionDate DateTime?
+
+  linkedAddress String?
+
+  statusHistory AccountStatusEntry[]
+  events        Event[]
+
+  @@index([reportId])
+  @@index([lenderId])
+}
+
+/// One month's balance/status-code entry from the account's payment
+/// history table — this is what powers the account timeline view.
+model AccountStatusEntry {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  periodDate  DateTime // first-of-month marker for that history slot
+  statusCode  String // "0".."6", "8", "D", "U", etc — bureau status codes
+  balance     Decimal? @db.Decimal(12, 2)
+
+  @@index([accountId, periodDate])
+}
+
+/// A dated negative-or-notable item: a default, a CCJ, a search/enquiry,
+/// an electoral roll entry, or a linked-address record.
+model Event {
+  id        String    @id @default(cuid())
+  reportId  String
+  report    Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  accountId String?
+  account   Account?  @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  type      EventType
+  date      DateTime
+  amount    Decimal?  @db.Decimal(12, 2)
+  detail    Json? // free-form: { searchedBy, applicationType, caseNumber, ... }
+
+  @@index([reportId, type])
+}
+
+/// A finding from the analytics engine — the thing the dashboard's
+/// "alerts" panel renders directly.
+model Alert {
+  id           String        @id @default(cuid())
+  reportId     String
+  report       Report        @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  type         AlertType
+  severity     AlertSeverity
+  message      String
+  relatedRefs  Json? // e.g. { accountIds: [...], eventIds: [...] }
+  createdAt    DateTime      @default(now())
+
+  @@index([reportId])
+}
