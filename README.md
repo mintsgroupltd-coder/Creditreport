@@ -20,12 +20,27 @@ This is a working scaffold, not a hardened production system. Specifically:
   that testing found (including a real data-quality bug in how
   Experian itself represents "satisfied" defaults, which the parser
   now works around).
-- **Equifax and TransUnion are best-effort.** Neither bureau's report
-  layout was available to build and test a dedicated parser against,
-  so both currently fall back to a generic keyword/pattern scanner
-  (`genericFallbackParser.ts`). Expect lower accuracy — the UI surfaces
-  a warning whenever this path is used. See that section for how to
-  upgrade either to a dedicated parser once you have a real sample.
+- **The Equifax parser is real and tested too**, built and checked
+  against a real 109-page Equifax UK consumer report the same way the
+  Experian parser was — see [§ Parsing engine](#parsing-engine) for
+  what it covers (accounts across every agreement type, defaults,
+  arrears, hard/soft searches, payment-history expansion) and what it
+  deliberately doesn't yet (electoral register, gone-away records,
+  CIFAS, property valuation — none of these feed the app's core
+  features, and none were validated against a real sample containing
+  them). Its one fully-honest gap is court judgments (CCJs): the real
+  sample had none on it, so Equifax's actual judgment-table layout has
+  never been seen — if a report's Court and other public records
+  section isn't entirely empty, the parser falls back to the same
+  conservative keyword scan the generic parser uses and surfaces a
+  warning, rather than guessing a table structure.
+- **TransUnion is still best-effort.** Its report layout wasn't
+  available to build and test a dedicated parser against, so it falls
+  back to a generic keyword/pattern scanner (`genericFallbackParser.ts`).
+  Expect lower accuracy — the UI surfaces a warning whenever this path
+  is used. See [§ Parsing engine](#parsing-engine) for how to upgrade
+  it to a dedicated parser once you have a real sample, following the
+  same approach used for Experian and Equifax.
 - **Auth is email+password only**, JWT-based with bcrypt hashing, plus a
   token-based forgot/reset-password flow (see § Password reset below).
   OAuth isn't wired up — `auth.controller.ts` has a comment on the
@@ -39,6 +54,12 @@ This is a working scaffold, not a hardened production system. Specifically:
   despite the glued reference headers, glued-label extraction, the
   SATISFIED-vs-DEFAULT corroboration logic, CCJ/search parsing, and the
   no-accounts-found warning path;
+  `src/services/parsing/equifaxParser.test.ts` covers the same ground
+  for the glued (colon-free) "LabelValue" table rows Equifax uses,
+  every agreement type's block header, the plain-English Status
+  classification (including "Inactive" and "N payments in arrears"),
+  payment-history grid expansion and its top/bottom-row alignment
+  logic, hard/soft search parsing, and the court-records fallback path;
   `src/services/analytics/disputeTextGenerator.test.ts` covers the
   formal notice-of-correction letter (correct statutory citations, ICO
   not FOS, never "legally binding", the statement quoted verbatim
@@ -556,22 +577,82 @@ against a small alias list (`lender`/`company`/`creditor`,
 `current balance`/`balance`, etc) rather than one fixed schema, since
 every export tool names columns slightly differently.
 
-### Equifax / TransUnion / anything unrecognised (`genericFallbackParser.ts`)
+### Equifax (`equifaxParser.ts`)
 
-No dedicated block parser exists for these yet (no real sample to
+Built and validated against a real 109-page Equifax UK consumer
+report, the same way as the Experian parser. Equifax's layout is a
+numbered-section report (1. Personal Information … 10. CIFAS) where
+every credit agreement is its own bordered "Label | Value" table, one
+row per field, followed by a separate month-by-month payment-history
+grid. The key structural fact that drives the whole parser: pdf-parse
+extracts each table row as `LabelValue` glued together with **no**
+separator — no colon, unlike Experian (e.g. `Account NumberXXXXXXX7863`,
+`Current Balance£0`, `Default DateN/A`) — so label/value extraction
+anchors on the literal label text itself (`extractLabels()`), and
+block splitting anchors on the closed set of account-type header
+prefixes Equifax actually uses (`Credit Card|Loan|Communications
+Supplier|Basic Bank Account|Current Account|Mail Order|Hire
+Purchase|Agreement`) rather than a generic "capitalised words + from"
+pattern, which would false-positive on ordinary prose.
+
+What it covers:
+
+- **Every agreement type** — credit cards, loans, hire purchase,
+  utilities/communications suppliers, banking/current accounts, mail
+  order — both open and closed, since they all share the same table
+  shape.
+- **Status classification from Equifax's own plain-English `Status`
+  field** ("Up to date with payments", "Settled", "Default", "N
+  payments in arrears", "Inactive"), corroborated by Default Date /
+  Date Satisfied the same way Experian's `classifyAccountStatus()`
+  corroborates its balance-field label — see `classifyEquifaxStatus()`.
+  An "in arrears" status also raises a dedicated `ARREARS` event.
+- **The payment-history grid** (`JFMAMJJASOND` + one row per year,
+  each row a single glued token of year+status-codes). A full row is
+  always exactly 12 codes; a short row only ever occurs at the very
+  top (the current/report year, not yet finished) or the very bottom
+  (the oldest year shown, truncated by Equifax's retention window) —
+  confirmed against the real sample's own start dates — so those two
+  positions are aligned to January and December respectively, and any
+  other short row is skipped rather than guessed at. See
+  `extractPaymentHistory()`.
+- **Hard and soft searches** (section 7), including rows where the
+  consumer's own DOB prints as `N/A` instead of a date.
+- **A conservative fallback for court records** (section 5): the real
+  sample this was built from has no CCJs on it (all three "Public
+  Records at …" subsections read "No data present"), so Equifax's
+  actual judgment-table layout has never been seen. The parser trusts
+  the "no data" case with confidence; if a report's court-records
+  section isn't entirely empty, it falls back to the same keyword scan
+  `genericFallbackParser.ts` uses and attaches a warning, rather than
+  inventing a table structure that hasn't been validated.
+
+What it deliberately doesn't parse yet: electoral register (section
+3), gone-away records (section 9), and CIFAS (section 10) — none of
+these feed the app's core features (CCJ detection, active-default
+detection, search-volume alerts, account status history), and building
+dedicated parsing for them without a real sample containing data would
+mean guessing. The applicant's own date of birth is also inferred
+best-effort (the first account block that recorded one — Equifax's
+Personal Information section only prints the applicant's *addresses*,
+not their DOB, unlike Experian's Application Details block).
+
+### TransUnion / anything unrecognised (`genericFallbackParser.ts`)
+
+No dedicated block parser exists for TransUnion yet (no real sample to
 validate against — see the top-level warning). This scans line by
 line for default/arrears/CCJ/search keywords near a date and a
 £-amount, and seeds "shaped" account rows from lines that look like
 `Lender name ... £amount ... date`. It's intentionally conservative
-and will under-extract compared to the Experian parser; every report
-parsed this way carries a warning saying so.
+and will under-extract compared to the Experian and Equifax parsers;
+every report parsed this way carries a warning saying so.
 
-**To upgrade Equifax or TransUnion to a real parser:** get a sample
-export, find its equivalent of the "glued block reference" (or
-whatever its actual delimiter is), and write a new file mirroring
-`experianParser.ts`'s structure — split into blocks, extract labels
-per block type, return a `ParsedReport`. Swap the one-line delegation
-in `equifaxParser.ts` / `transunionParser.ts` for the new function.
+**To upgrade TransUnion to a real parser:** get a sample export, find
+its equivalent of the "glued block reference" (or whatever its actual
+delimiter is), and write a new file mirroring `experianParser.ts` or
+`equifaxParser.ts`'s structure — split into blocks, extract labels per
+block type, return a `ParsedReport`. Swap the one-line delegation in
+`transunionParser.ts` for the new function.
 
 ## Analytics engine
 
@@ -625,12 +706,20 @@ run once at upload time (`reportPersistence.ts`) and persisted as
 ## Extending this
 
 - **Add OAuth**: see the comment at the bottom of `auth.controller.ts`.
-- **Add a real Equifax/TransUnion parser**: see § Parsing engine above.
-- **Extend the test suite**: `experianParser.test.ts` covers the
-  Experian block parser; the analytics engine (`riskSummary.ts`,
-  `anomalyDetection.ts`, `negativeMarkers.ts`) and the CSV/generic
-  parsers are still untested — same fixture-based approach, synthetic
-  data only.
+- **Add a real TransUnion parser**: see § Parsing engine above —
+  Equifax now has one too, built the same way, so `equifaxParser.ts` is
+  a second worked example alongside `experianParser.ts` to follow.
+- **Add real Equifax court-judgment parsing**: the sample this was
+  built from had no CCJs on it, so `parseCourtRecordsSection()` in
+  `equifaxParser.ts` currently falls back to a keyword scan rather than
+  a dedicated table parser — get a sample report containing one and
+  extend it the same way `experianParser.ts`'s `parseJudgmentBlock()`
+  works.
+- **Extend the test suite**: `experianParser.test.ts` and
+  `equifaxParser.test.ts` cover those two block parsers; the analytics
+  engine (`riskSummary.ts`, `anomalyDetection.ts`, `negativeMarkers.ts`)
+  and the CSV/generic parsers are still untested — same fixture-based
+  approach, synthetic data only.
 - **Generate real Prisma migrations**: see the note in § Status and
   scope — this repo was built in a network-restricted sandbox that
   couldn't reach `binaries.prisma.sh`, so the schema is synced with
