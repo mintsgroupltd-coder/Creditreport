@@ -123,6 +123,20 @@ export function ReportDetailPage() {
     }
   }
 
+  async function handleDownloadEscalationPack(disputeId: string) {
+    try {
+      const blob = await api.downloadEscalationPackPdf(disputeId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `escalation-pack-${disputeId}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not generate the escalation pack.");
+    }
+  }
+
   async function handleMarkSent() {
     if (!id) return;
     setMarkingSent(true);
@@ -471,12 +485,20 @@ export function ReportDetailPage() {
             onMarkResolved={handleMarkResolved}
             onMarkNoResponse={handleMarkNoResponse}
             onDownloadTrackingSheet={handleDownloadTrackingSheet}
+            onDownloadEscalationPack={handleDownloadEscalationPack}
           />
         </div>
       </section>
 
       <section className="mt-8">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Data-quality alerts</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Data-quality alerts</h2>
+          {data.alerts.length > 0 && (
+            <Link to={`/reports/${id}/inspector`} className="text-xs font-medium text-accent hover:underline">
+              Open document inspector →
+            </Link>
+          )}
+        </div>
         <div className="mt-3">
           <AlertList alerts={data.alerts} accounts={data.accounts} />
         </div>

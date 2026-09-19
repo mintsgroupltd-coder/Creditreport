@@ -5,7 +5,9 @@ import { AccountDetailPage } from "./pages/AccountDetailPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { LoginPage } from "./pages/LoginPage";
+import { ReconciliationPage } from "./pages/ReconciliationPage";
 import { ReportDetailPage } from "./pages/ReportDetailPage";
+import { ReportInspectorPage } from "./pages/ReportInspectorPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SignupPage } from "./pages/SignupPage";
@@ -40,10 +42,26 @@ export function App() {
         }
       />
       <Route
+        path="/reports/:id/inspector"
+        element={
+          <RequireAuth>
+            <ReportInspectorPage />
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/accounts/:id"
         element={
           <RequireAuth>
             <AccountDetailPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/reconciliation"
+        element={
+          <RequireAuth>
+            <ReconciliationPage />
           </RequireAuth>
         }
       />

@@ -58,18 +58,28 @@ function StatusPill({ status }: { status: DisputeRecordRow["status"] }) {
   return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${styles[status]}`}>{labels[status]}</span>;
 }
 
+/** Same three templates as CRA_STATUTORY_TEMPLATES above, plus
+ * default_validation — the one advisory template that still has a real
+ * escalation route (a conduct complaint to the FOS about the lender). A
+ * CCJ dispute has no ICO/FOS route at all (see escalationAuthorityFor in
+ * backend/src/controllers/disputes.controller.ts), so it's deliberately
+ * left out here. */
+const ESCALATION_PACK_TEMPLATES = new Set(["auto", "identity", "general_accuracy", "notice_of_correction", "default_validation"]);
+
 export function DisputeTracker({
   disputes,
   templates,
   onMarkResolved,
   onMarkNoResponse,
   onDownloadTrackingSheet,
+  onDownloadEscalationPack,
 }: {
   disputes: DisputeRecordRow[];
   templates: DisputeTemplateOption[];
   onMarkResolved: (id: string) => void;
   onMarkNoResponse: (id: string) => void;
   onDownloadTrackingSheet?: (id: string) => void;
+  onDownloadEscalationPack?: (id: string) => void;
 }) {
   if (disputes.length === 0) {
     return <p className="text-sm text-slate-500">No disputes logged yet for this report — use "Mark as sent" above once you've posted a letter.</p>;
@@ -96,6 +106,15 @@ export function DisputeTracker({
                   className="rounded-md border border-border px-2 py-1 text-xs text-slate-300 hover:border-accent hover:text-accent"
                 >
                   Tracking sheet
+                </button>
+              )}
+              {onDownloadEscalationPack && ESCALATION_PACK_TEMPLATES.has(d.templateId) && (
+                <button
+                  onClick={() => onDownloadEscalationPack(d.id)}
+                  title="A bundled PDF: case summary, the letter as sent, and the ICO or FOS's contact details with dated milestones"
+                  className="rounded-md border border-border px-2 py-1 text-xs text-slate-300 hover:border-accent hover:text-accent"
+                >
+                  Escalation pack
                 </button>
               )}
               {d.status === "SENT" && (

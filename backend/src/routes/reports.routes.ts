@@ -6,6 +6,7 @@ import {
   getDisputeText,
   getReport,
   getReportComparison,
+  getReportInspector,
   listReports,
   uploadReport,
 } from "../controllers/reports.controller";
@@ -22,6 +23,7 @@ reportsRouter.post("/", uploadLimiter, upload.single("file"), asyncRoute(uploadR
 reportsRouter.get("/", asyncRoute(listReports));
 reportsRouter.get("/:id", asyncRoute(getReport));
 reportsRouter.get("/:id/compare", asyncRoute(getReportComparison));
+reportsRouter.get("/:id/inspector", asyncRoute(getReportInspector));
 reportsRouter.get("/:id/dispute-templates", asyncRoute(getDisputeTemplates));
 reportsRouter.get("/:id/dispute-text", asyncRoute(getDisputeText));
 reportsRouter.get("/:id/dispute-pdf", asyncRoute(getDisputePdf));

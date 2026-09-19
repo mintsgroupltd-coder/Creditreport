@@ -191,6 +191,62 @@ export interface DisputeListResponse {
   disputes: DisputeRecordRow[];
 }
 
+/** One "pin" tying an alert back to where its evidence appears in the
+ * report's own extracted text — see the backend's
+ * services/analytics/documentPins.ts. This is a position inside the
+ * text pdf-parse extracted at upload time, NOT a page/x/y coordinate in
+ * the original PDF — the app doesn't keep the original file bytes, only
+ * the text. startIndex/endIndex are both null when nothing in the alert
+ * could be located in the text at all. */
+export interface DocumentPin {
+  id: string;
+  alertId: string;
+  type: AlertType;
+  severity: AlertSeverity;
+  label: string;
+  message: string;
+  anchor: string | null;
+  startIndex: number | null;
+  endIndex: number | null;
+}
+
+export interface InspectorResponse {
+  reportId: string;
+  sourceFileType: string;
+  rawText: string;
+  pins: DocumentPin[];
+}
+
+export type ReconciliationBureauKey = "EXPERIAN" | "EQUIFAX" | "TRANSUNION";
+
+export interface ReconciliationBureauInfo {
+  bureau: ReconciliationBureauKey;
+  reportId: string;
+  uploadedAt: string;
+  sourceFileName: string;
+}
+
+export interface ReconciliationCell {
+  reportId: string;
+  accountId: string;
+  bureauRef: string | null;
+  status: AccountStatus;
+  currentBalance: number | null;
+  defaultDate: string | null;
+}
+
+export interface ReconciliationRow {
+  key: string;
+  lenderName: string;
+  accountType: string;
+  cells: Partial<Record<ReconciliationBureauKey, ReconciliationCell>>;
+  discrepancies: string[];
+}
+
+export type ReconciliationResponse =
+  | { eligible: false; bureausIncluded: ReconciliationBureauInfo[]; message: string }
+  | { eligible: true; bureausIncluded: ReconciliationBureauInfo[]; rows: ReconciliationRow[]; discrepancyCount: number };
+
 export interface ReportComparison {
   hasPrevious: boolean;
   previousReport?: { id: string; bureau: Bureau; uploadedAt: string; sourceFileName: string };

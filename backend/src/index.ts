@@ -7,6 +7,7 @@ import { authRouter } from "./routes/auth.routes";
 import { contactsRouter } from "./routes/contacts.routes";
 import { disputesRouter } from "./routes/disputes.routes";
 import { profileRouter } from "./routes/profile.routes";
+import { reconciliationRouter } from "./routes/reconciliation.routes";
 import { reportsRouter } from "./routes/reports.routes";
 
 const app = express();
@@ -22,6 +23,7 @@ app.use("/api/accounts", accountsRouter);
 app.use("/api/contacts", contactsRouter);
 app.use("/api/profile", profileRouter);
 app.use("/api/disputes", disputesRouter);
+app.use("/api/reconciliation", reconciliationRouter);
 
 app.use(errorHandler);
 

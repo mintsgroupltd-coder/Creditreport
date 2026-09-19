@@ -16,6 +16,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           {user && (
             <div className="flex items-center gap-4 text-sm text-slate-400">
               <span>{user.email}</span>
+              <Link to="/reconciliation" className="rounded-md border border-border px-3 py-1.5 text-slate-300 hover:border-accent hover:text-accent">
+                Reconciliation
+              </Link>
               <Link to="/settings" className="rounded-md border border-border px-3 py-1.5 text-slate-300 hover:border-accent hover:text-accent">
                 Settings
               </Link>

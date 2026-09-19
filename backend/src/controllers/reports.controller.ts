@@ -14,6 +14,8 @@ import {
   listDisputeTemplates,
 } from "../services/analytics/disputeTextGenerator";
 import { checkProfileIdentityMatch } from "../services/analytics/identityCheck";
+import { buildDocumentPins } from "../services/analytics/documentPins";
+import { extractBureauRefs } from "../services/analytics/relatedRefs";
 import { DisputeScheduleRow, EnvelopeSize, renderDisputeLetterPdf, SignatureMode } from "../services/pdf/disputeLetterPdf";
 
 export async function uploadReport(req: AuthenticatedRequest, res: Response) {
@@ -66,7 +68,7 @@ export async function listReports(req: AuthenticatedRequest, res: Response) {
   res.json({ reports });
 }
 
-async function loadOwnedReport(reportId: string, userId: string) {
+export async function loadOwnedReport(reportId: string, userId: string) {
   const report = await prisma.report.findFirst({
     where: { id: reportId, userId },
     include: {
@@ -79,28 +81,12 @@ async function loadOwnedReport(reportId: string, userId: string) {
   return report;
 }
 
-type OwnedReport = Awaited<ReturnType<typeof loadOwnedReport>>;
+export type OwnedReport = Awaited<ReturnType<typeof loadOwnedReport>>;
 type OwnedAccount = OwnedReport["accounts"][number];
 type OwnedEvent = OwnedReport["events"][number];
 type OwnedAlert = OwnedReport["alerts"][number];
 
 const SEARCH_WINDOW_DAYS = 365;
-
-/** relatedRefs is a loosely-shaped bag written by different analytics checks
- * ({accountRef}, {eventRef}, {refs: [...]}) — all of them hold bureau
- * reference strings (e.g. "C11"), never DB ids, so the frontend can't link
- * to an account from them directly. This pulls out every string value,
- * regardless of which key it was filed under. */
-function extractBureauRefs(relatedRefs: unknown): string[] {
-  if (!relatedRefs || typeof relatedRefs !== "object") return [];
-  const values = Object.values(relatedRefs as Record<string, unknown>);
-  const refs: string[] = [];
-  for (const v of values) {
-    if (typeof v === "string") refs.push(v);
-    else if (Array.isArray(v)) refs.push(...v.filter((x): x is string => typeof x === "string"));
-  }
-  return refs;
-}
 
 /** Shared by getReport (full detail) and getReportComparison (progress
  * over time) so the two never drift on how a "negative marker" is
@@ -212,6 +198,30 @@ export async function getReport(req: AuthenticatedRequest, res: Response) {
   });
 }
 
+/**
+ * The "document inspector" data — the report's raw extracted text, plus
+ * a best-effort set of "pins" tying each alert back to where its
+ * evidence actually appears in that text (a bureau reference like "C11",
+ * or failing that the lender's name). This is NOT a rendered image of
+ * the original PDF page — the app only keeps the text pdf-parse
+ * extracted at upload time, not the original file bytes — so a pin is a
+ * position inside that extracted text, not a page/x/y coordinate. Any
+ * alert whose anchor text can't be found gets returned with null
+ * indexes rather than a guessed position, so the UI can be honest about
+ * what it could and couldn't locate. See services/analytics/documentPins.ts.
+ */
+export async function getReportInspector(req: AuthenticatedRequest, res: Response) {
+  const report = await loadOwnedReport(req.params.id, req.user!.id);
+  const pins = buildDocumentPins(report.rawText, report.alerts as OwnedAlert[], report.accounts as OwnedAccount[]);
+
+  res.json({
+    reportId: report.id,
+    sourceFileType: report.sourceFileType,
+    rawText: report.rawText,
+    pins,
+  });
+}
+
 /** Compares this report against the user's most recent earlier report —
  * preferring one from the same bureau (so a like-for-like re-upload after
  * a dispute is the common case), falling back to any earlier report if
@@ -263,7 +273,7 @@ export async function getReportComparison(req: AuthenticatedRequest, res: Respon
  * services/analytics/identityCheck.ts) — computed here rather than
  * persisted as an Alert, so it can never go stale if the user fills in
  * their profile after the report was already uploaded. */
-async function buildDisputeLetterInput(report: OwnedReport, userId: string, correctionStatement?: string): Promise<DisputeLetterInput> {
+export async function buildDisputeLetterInput(report: OwnedReport, userId: string, correctionStatement?: string): Promise<DisputeLetterInput> {
   const profile = await prisma.user.findUnique({
     where: { id: userId },
     select: { fullName: true, postalAddress: true, dateOfBirth: true, electoralRollRegistered: true, identityConfirmedAt: true },
@@ -330,7 +340,7 @@ export async function getDisputeText(req: AuthenticatedRequest, res: Response) {
 /** Builds the itemised-schedule rows straight from the same CCJ/default
  * data the letter itself was built from, so the PDF's appendix can never
  * drift from what the letter actually says. */
-function buildDisputeSchedule(input: DisputeLetterInput): DisputeScheduleRow[] {
+export function buildDisputeSchedule(input: DisputeLetterInput): DisputeScheduleRow[] {
   const rows: DisputeScheduleRow[] = [];
   for (const ccj of input.ccjs) {
     rows.push({

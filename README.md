@@ -47,17 +47,25 @@ This is a working scaffold, not a hardened production system. Specifically:
   only to identity-type letters); `src/services/analytics/identityCheck.test.ts`
   covers the profile-vs-report comparison (unconfirmed profile, name
   match tolerant of word order, name/DOB mismatches, and the
-  nothing-to-compare case). The analytics engine's internal anomaly
-  detection and the other parsers still don't have coverage — this is
-  a starting point, not a finished suite.
-- **Phases 1 and 2 of the auditor/dispute-engine work are in place** —
+  nothing-to-compare case); `src/services/analytics/documentPins.test.ts`
+  covers the document-inspector anchor matching (word-boundary vs
+  plain-substring matching, the lender-name fallback, and the
+  not-located case returning null rather than a guess);
+  `src/services/analytics/reconciliation.test.ts` covers the tri-bureau
+  matrix (not-eligible states, lender+type matching across bureaus by
+  ID rather than bureau reference, missing/status/balance discrepancy
+  detection, and the balance-tolerance threshold). The analytics
+  engine's internal anomaly detection and the other parsers still don't
+  have coverage — this is a starting point, not a finished suite.
+- **All three phases of the auditor/dispute-engine work are in place** —
   see [§ Statutory dispute tools](#statutory-dispute-tools) for the
   notice-of-correction template, envelope-ready PDF export, and
   postage-record/milestone tracker; [§ Confirmed identity vs. report
   data](#confirmed-identity-vs-report-data) for the self-declared
-  profile identity that now feeds the anomaly checks and letters, and
-  the sample-vs-real report badge. Phase 3 (a visual PDF inspector and
-  tri-bureau reconciliation) isn't built yet.
+  profile identity that feeds the anomaly checks and letters, and the
+  sample-vs-real report badge; [§ Regulatory toolkit & escalation
+  hub](#regulatory-toolkit--escalation-hub) for the document inspector,
+  tri-bureau reconciliation, and the bundled ICO/FOS escalation pack.
 - **Prisma's engine binaries need internet access to install.**
   `npx prisma generate` downloads a query-engine binary on first run.
   If you're behind a restrictive proxy/firewall, allow
@@ -176,7 +184,11 @@ Defined in `backend/prisma/schema.prisma`:
   (`normalizeLenderName()` strips "LTD"/"PLC"/etc and punctuation), so
   "JC International Acquisition LLC" appearing on three different
   accounts collapses to one Lender row instead of three. Also carries
-  an optional user-entered `contactAddress`.
+  an optional user-entered `contactAddress`. This global dedup is also
+  what tri-bureau reconciliation keys on — the same real-world creditor
+  lands on the same `Lender` row regardless of which bureau's report it
+  came from, even though each bureau assigns its own independent
+  account reference (see § Regulatory toolkit & escalation hub).
 - **Account** — one row per credit facility (a card, loan, utility
   account, etc). Carries both the current snapshot (balance, limit,
   status) and the default/satisfaction dates that drive most of the
@@ -214,6 +226,7 @@ also rate-limited (`middleware/rateLimit.ts`).
 | `GET /api/reports` | List the caller's reports with account/alert counts |
 | `GET /api/reports/:id` | Full report detail: stats, accounts, events, alerts (each with `relatedAccountIds`), `insights` (risk level, plain-English summary, suggested actions), `negativeMarkers` (CCJ/default/utilisation/search counts and totals), and `identityCheck` (live comparison of this report's own application details against the caller's confirmed profile — see § Confirmed identity vs. report data) |
 | `GET /api/reports/:id/compare` | Compares this report's stats/negative markers/risk level against the user's most recent earlier report (same bureau preferred), for tracking progress after a dispute — returns `{ hasPrevious: false }` if there isn't one |
+| `GET /api/reports/:id/inspector` | The document inspector's data: the report's raw extracted text plus a "pin" per alert anchoring it to where its evidence appears in that text — see § Regulatory toolkit & escalation hub |
 | `GET /api/reports/:id/dispute-templates` | Lists the dispute letter templates available for this report (`auto`, `identity`, `ccj`, `default_validation`, `general_accuracy`, `notice_of_correction`), each flagged `relevant: true/false` based on what was actually found on the report |
 | `GET /api/reports/:id/dispute-text?template=<id>&correctionStatement=<text>` | Plain-text dispute letter body for the chosen template (defaults to `auto`), built from the report's already-persisted alerts/events/accounts plus the caller's saved name/address if set. `correctionStatement` is only used by `notice_of_correction` — see § Statutory dispute tools below |
 | `GET /api/reports/:id/dispute-pdf?template=<id>&correctionStatement=<text>&envelope=<c5\|dl>&signature=<digital\|blank>` | The same letter as a downloadable PDF (`pdfkit`). With no `envelope`, it's a plain formatted letter as before; `envelope=c5`/`dl` instead lays the recipient address out inside that envelope's window position with dashed fold guides and appends an itemised schedule of the disputed CCJs/defaults — see § Statutory dispute tools |
@@ -226,6 +239,8 @@ also rate-limited (`middleware/rateLimit.ts`).
 | `GET /api/disputes?reportId=<id>` | Lists dispute records for a report |
 | `PATCH /api/disputes/:id` | Body `{ status?, notes? }` — mark a dispute `RESOLVED` / `NO_RESPONSE`, or add notes |
 | `GET /api/disputes/:id/tracking-sheet-pdf?service=<text>&cost=<text>` | A plain, unbranded "postage record" PDF for one logged dispute — see § Statutory dispute tools |
+| `GET /api/disputes/:id/escalation-pack-pdf` | A bundled PDF (case summary, the letter as sent, escalation authority contact + dated milestones) for one logged dispute — 400s for a CCJ dispute, which has no ICO/FOS escalation route — see § Regulatory toolkit & escalation hub |
+| `GET /api/reconciliation` | Cross-references the user's most recent real (non-sample) report from each bureau to flag accounts reported inconsistently between them — see § Regulatory toolkit & escalation hub |
 
 `uploadReport` (`controllers/reports.controller.ts`) is the whole
 pipeline in one place: extract text → `parseReportText()` →
@@ -258,8 +273,10 @@ a second round trip.
   report, with a status pill and a deadline badge (overdue/soon/OK,
   labelled "response window" for the statutory 28-day CRA deadline vs
   "suggested follow-up" for the advisory ones), a "Tracking sheet"
-  download button, an ICO escalation note once a statutory deadline has
-  passed, plus buttons to mark a dispute resolved or unanswered.
+  download button, an "Escalation pack" download button (for every
+  template except CCJ, which has no ICO/FOS route), an ICO escalation
+  note once a statutory deadline has passed, plus buttons to mark a
+  dispute resolved or unanswered.
 - **`ComparisonPanel`** — a before/after table of risk level and
   negative markers against the user's previous report, with
   improved/worse deltas (a decrease in CCJs/defaults/etc is "better").
@@ -272,23 +289,27 @@ progress-over-time comparison, useful contacts, a dispute-template
 picker — including envelope (C5/DL) and signature-mode (typed/blank)
 selectors for the PDF export, and a 200-word statement box with a live
 counter when the "notice of correction" template is picked — with
-copy-to-clipboard/PDF export and sent-dispute tracking, alerts,
-accounts, and a delete button so a report can be removed and
-re-uploaded), `AccountDetailPage` (single account, an editable
-lender/agent contact address, balance chart, and timeline),
-`SettingsPage` (self-declared name/date of birth/address for letter
-auto-fill and the profile-vs-report check, an electoral-roll
-registration note, and a confirmed/not-confirmed identity banner — all
-explicitly labelled as self-declared, never independently verified),
-`ForgotPasswordPage` / `ResetPasswordPage`. Auth state lives in
-`AuthContext` and the JWT sits in `localStorage`.
+copy-to-clipboard/PDF export and sent-dispute tracking, alerts (with a
+link through to the document inspector), accounts, and a delete button
+so a report can be removed and re-uploaded), `ReportInspectorPage`
+(the document inspector — see § Regulatory toolkit & escalation hub),
+`AccountDetailPage` (single account, an editable lender/agent contact
+address, balance chart, and timeline), `ReconciliationPage` (the
+tri-bureau reconciliation matrix — see § Regulatory toolkit &
+escalation hub, linked from the header nav), `SettingsPage`
+(self-declared name/date of birth/address for letter auto-fill and the
+profile-vs-report check, an electoral-roll registration note, and a
+confirmed/not-confirmed identity banner — all explicitly labelled as
+self-declared, never independently verified), `ForgotPasswordPage` /
+`ResetPasswordPage`. Auth state lives in `AuthContext` and the JWT
+sits in `localStorage`.
 
 ## Statutory dispute tools
 
 Phase 1 of the "statutory dispute engine" work. Everything here is
 addressed to the credit reference agency (or, where noted, is neutral
-paperwork) — Phase 2/3 (verified identity, PDF inspector, tri-bureau
-reconciliation) aren't built yet.
+paperwork). See § Confirmed identity vs. report data for Phase 2 and
+§ Regulatory toolkit & escalation hub for Phase 3.
 
 - **Formal statutory notice of correction** (`notice_of_correction`
   template, `disputeTextGenerator.ts`) implements section 159(3) of the
@@ -397,6 +418,74 @@ strictly separate from whatever a given report claims about itself.
   report page both badge it "Sample data" so a demo/dev account's
   fictional report is never confused with — or, since each user only
   sees their own reports, mixed up with — a real upload.
+
+## Regulatory toolkit & escalation hub
+
+Phase 3 of the auditor/dispute-engine work: a document inspector for
+tracing a finding back to the source text, cross-bureau reconciliation,
+and a bundled escalation pack for when a statutory deadline is missed.
+None of this needed a schema change — it's all built from data the app
+already persists.
+
+- **Document inspector** (`GET /api/reports/:id/inspector`,
+  `services/analytics/documentPins.ts`, `ReportInspectorPage`). Shows
+  the report's raw extracted text with each alert "pinned" to where its
+  evidence actually appears — anchored first to the related account's
+  bureau reference (e.g. "C11"), falling back to the lender's name if
+  the reference itself isn't findable in the text. **This is not a
+  rendered image of the original PDF's page layout** — the app only
+  ever kept the text `pdf-parse` extracted at upload time, never the
+  original file bytes, so a "pin" is a character range inside that
+  extracted text, not a page/x/y coordinate. Matching is word-boundary
+  first (so a short ref like "C1" can't match inside "C11") with a
+  plain-substring fallback, and — deliberately — an alert whose anchor
+  can't be found anywhere in the text is shown as "not located" rather
+  than given a guessed position; see `documentPins.test.ts` for the
+  boundary-matching and not-located cases specifically.
+- **Tri-bureau reconciliation** (`GET /api/reconciliation`,
+  `services/analytics/reconciliation.ts`, `ReconciliationPage`, linked
+  from the header nav). Takes the user's most recently uploaded *real*
+  report (`isSample: false`) from each bureau and cross-references
+  them account by account, matched by `(lenderId, accountType)` rather
+  than by bureau reference — bureau refs are assigned independently by
+  each bureau and never line up, but `Lender` rows are already
+  deduplicated globally by normalized name (see § Data model), so the
+  same real-world creditor lands on the same row no matter which
+  bureau's report it came from. Flags three kinds of discrepancy: an
+  account present on one bureau's file but absent from another's
+  (captioned to note this could mean not-yet-furnished, already
+  removed, or genuinely missing — the app can't tell which), a status
+  that differs between bureaus, and a balance that differs by more than
+  whichever is larger of £50 or 5% (a fixed pound threshold alone would
+  flag noise on large balances; a percentage alone would flag noise on
+  small ones — see `balancesMateriallyDiffer` and
+  `reconciliation.test.ts`). Needs real reports from at least two
+  different bureaus to produce anything; with fewer, it explains why
+  rather than showing an empty table.
+- **ICO/FOS escalation pack** (`GET
+  /api/disputes/:id/escalation-pack-pdf`,
+  `services/pdf/escalationPackPdf.ts`, a button on `DisputeTracker`). A
+  single bundled PDF for a logged dispute: a cover page (case summary,
+  every alert the analytics engine actually flagged on that report, the
+  live identity-check result if it's a mismatch, the itemised
+  CCJ/default schedule, and any notes logged against the dispute), the
+  original letter reproduced in plain layout for the record, and a
+  final page with the correct escalation authority's contact details
+  and the dispute's dated milestones (reusing the same milestone logic
+  as the tracking sheet, so the two can never disagree). **Which
+  authority depends on the template**, reusing the ICO-vs-FOS
+  distinction from § Statutory dispute tools rather than picking one
+  arbitrarily: the CRA-statutory templates (identity/general
+  accuracy/auto/notice of correction) escalate to the ICO under s.159;
+  `default_validation` is addressed to a lender, so an unanswered
+  letter is a conduct complaint and escalates to the FOS instead; a
+  `ccj` dispute is addressed to a court, has no ICO/FOS route at all,
+  and the endpoint returns a 400 explaining that rather than pointing
+  to the wrong regulator (`DisputeTracker` only shows the button for
+  templates that actually have a route). Explicitly labelled
+  informational on its own cover page — it's meant to be attached to,
+  or read alongside, whatever the user actually sends the regulator,
+  not submitted in its place.
 
 ## Parsing engine
 

@@ -3,7 +3,11 @@ import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
 import { HttpError } from "../middleware/errorHandler";
-import { ICO_CONTACT } from "../data/contacts";
+import { FOS_CONTACT, ICO_CONTACT } from "../data/contacts";
+import { buildDisputeLetterInput, buildDisputeSchedule, loadOwnedReport } from "./reports.controller";
+import { buildDisputeLetterParts, DisputeTemplateId } from "../services/analytics/disputeTextGenerator";
+import { checkProfileIdentityMatch } from "../services/analytics/identityCheck";
+import { renderEscalationPackPdf } from "../services/pdf/escalationPackPdf";
 import { renderTrackingSheetPdf, TrackingMilestone } from "../services/pdf/trackingSheetPdf";
 
 /** How long to wait before following up, and whether that's a real legal
@@ -163,6 +167,81 @@ function buildMilestones(templateId: string, sentAt: Date, deadlineBasis: string
   }
 
   return milestones;
+}
+
+/** Which regulator's contact details belong in the escalation pack for a
+ * given template — deliberately not a single hardcoded choice, because
+ * the two regulators this app knows about cover genuinely different
+ * things (see backend/src/data/contacts.ts):
+ *  - The CRA-statutory templates (identity/general_accuracy/auto/notice
+ *    of correction) are s.159 disputes with a credit reference agency —
+ *    their escalation authority is the ICO.
+ *  - A debt-validation letter is addressed to a lender about how it's
+ *    reporting an account — if it doesn't respond, that's a conduct
+ *    complaint about a regulated firm, which is the FOS's remit.
+ *  - A CCJ letter is addressed to a court, not a regulator — there's no
+ *    ICO/FOS escalation route for that, so this pack doesn't apply and
+ *    getEscalationPackPdf below refuses it rather than pointing to the
+ *    wrong authority. */
+function escalationAuthorityFor(templateId: string) {
+  if (CRA_STATUTORY_TEMPLATES.has(templateId)) return ICO_CONTACT;
+  if (templateId === "default_validation") return FOS_CONTACT;
+  return null;
+}
+
+export async function getEscalationPackPdf(req: AuthenticatedRequest, res: Response) {
+  const dispute = await prisma.disputeRecord.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+  if (!dispute) throw new HttpError(404, "Dispute record not found");
+
+  const authority = escalationAuthorityFor(dispute.templateId);
+  if (!authority) {
+    throw new HttpError(
+      400,
+      "There's no ICO/FOS escalation pack for a CCJ dispute — that goes through the issuing court's own process instead. See 'Useful contacts' on the report for the Civil National Business Centre's details."
+    );
+  }
+
+  const report = await loadOwnedReport(dispute.reportId, req.user!.id);
+  const templateId = dispute.templateId as DisputeTemplateId;
+
+  const input = await buildDisputeLetterInput(report, req.user!.id);
+  const parts = buildDisputeLetterParts(input, templateId);
+  const schedule = buildDisputeSchedule(input);
+  const milestones = buildMilestones(dispute.templateId, dispute.sentAt, dispute.deadlineBasis);
+
+  const profile = await prisma.user.findUnique({
+    where: { id: req.user!.id },
+    select: { fullName: true, dateOfBirth: true, identityConfirmedAt: true },
+  });
+  const identityCheck = checkProfileIdentityMatch(
+    { applicantName: report.applicantName, dateOfBirth: report.dateOfBirth ? report.dateOfBirth.toISOString().slice(0, 10) : null },
+    {
+      fullName: profile?.fullName ?? null,
+      dateOfBirth: profile?.dateOfBirth ? profile.dateOfBirth.toISOString().slice(0, 10) : null,
+      confirmed: Boolean(profile?.identityConfirmedAt),
+    }
+  );
+
+  const doc = renderEscalationPackPdf({
+    reportLabel: `${report.bureau} — ${report.sourceFileName}`,
+    templateLabel: TEMPLATE_LABELS[dispute.templateId] ?? dispute.templateId,
+    recipient: dispute.recipient,
+    sentDate: ukDate(dispute.sentAt),
+    status: dispute.status,
+    deadlinePassed: Boolean(dispute.responseDeadline && dispute.responseDeadline.getTime() < Date.now()),
+    notes: dispute.notes,
+    findingMessages: report.alerts.map((a: { message: string }) => a.message),
+    identityCheckMessage: identityCheck.overallMatch === false ? identityCheck.message : null,
+    letterParts: parts,
+    schedule,
+    milestones,
+    authority,
+  });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="escalation-pack-${dispute.id}.pdf"`);
+  doc.pipe(res);
+  doc.end();
 }
 
 export async function getTrackingSheetPdf(req: AuthenticatedRequest, res: Response) {

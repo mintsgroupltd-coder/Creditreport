@@ -6,7 +6,9 @@ import {
   DisputeStatus,
   DisputeTemplateOption,
   EnvelopeSize,
+  InspectorResponse,
   ProfileResponse,
+  ReconciliationResponse,
   ReportComparison,
   ReportDetail,
   ReportSummary,
@@ -99,6 +101,10 @@ export const api = {
 
   getReportComparison: (id: string) => request<ReportComparison>(`/reports/${id}/compare`),
 
+  getReportInspector: (id: string) => request<InspectorResponse>(`/reports/${id}/inspector`),
+
+  getReconciliation: () => request<ReconciliationResponse>("/reconciliation"),
+
   getProfile: () => request<ProfileResponse>("/profile"),
 
   updateProfile: (
@@ -161,6 +167,25 @@ export const api = {
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: res.statusText }));
       throw new ApiError(res.status, body.error ?? "Could not generate the tracking sheet");
+    }
+    return res.blob();
+  },
+
+  /** The bundled ICO/FOS escalation pack for a logged dispute — cover
+   * summary, the letter as sent, and the escalation authority's contact
+   * details with dated milestones. Only available for the templates
+   * that actually have an ICO or FOS escalation route (see
+   * escalationAuthorityFor in disputes.controller.ts) — a CCJ dispute's
+   * escalation route is the issuing court, not a regulator, so this
+   * throws a 400 for that template and the caller shows the message. */
+  async downloadEscalationPackPdf(disputeId: string): Promise<Blob> {
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/disputes/${disputeId}/escalation-pack-pdf`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, body.error ?? "Could not generate the escalation pack");
     }
     return res.blob();
   },
