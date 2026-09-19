@@ -101,8 +101,16 @@ export const api = {
 
   getProfile: () => request<ProfileResponse>("/profile"),
 
-  updateProfile: (fullName: string | null, postalAddress: string | null) =>
-    request<ProfileResponse>("/profile", { method: "PATCH", body: JSON.stringify({ fullName, postalAddress }) }),
+  updateProfile: (
+    fullName: string | null,
+    postalAddress: string | null,
+    dateOfBirth?: string | null,
+    electoralRollRegistered?: boolean | null
+  ) =>
+    request<ProfileResponse>("/profile", {
+      method: "PATCH",
+      body: JSON.stringify({ fullName, postalAddress, dateOfBirth, electoralRollRegistered }),
+    }),
 
   listDisputes: (reportId: string) => request<DisputeListResponse>(`/disputes?reportId=${encodeURIComponent(reportId)}`),
 

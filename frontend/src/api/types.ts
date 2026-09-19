@@ -28,6 +28,9 @@ export interface ReportSummary {
   sourceFileName: string;
   uploadedAt: string;
   applicantName: string | null;
+  /** True only for the fixture report created by the backend's seed
+   * script — badge it clearly so it's never mistaken for a real upload. */
+  isSample: boolean;
   _count: { accounts: number; alerts: number };
 }
 
@@ -68,6 +71,18 @@ export interface NegativeMarkers {
   recentSearchCount: number;
 }
 
+/** Compares this report's own self-reported application details against
+ * the user's separately confirmed profile identity — see the backend's
+ * services/analytics/identityCheck.ts for the full reasoning. Always
+ * self-declared vs self-declared, never independently verified. */
+export interface IdentityCheck {
+  profileConfirmed: boolean;
+  nameMatches: boolean | null;
+  dobMatches: boolean | null;
+  overallMatch: boolean | null;
+  message: string;
+}
+
 export interface ReportDetail {
   report: {
     id: string;
@@ -77,7 +92,9 @@ export interface ReportDetail {
     applicantName: string | null;
     dateOfBirth: string | null;
     addresses: { line: string; source?: string }[] | null;
+    isSample: boolean;
   };
+  identityCheck: IdentityCheck;
   insights: ReportInsights;
   stats: {
     totalAccounts: number;
@@ -145,6 +162,14 @@ export interface ProfileResponse {
   email: string;
   fullName: string | null;
   postalAddress: string | null;
+  /** ISO date (YYYY-MM-DD), self-declared — never independently verified. */
+  dateOfBirth: string | null;
+  /** Self-declared, not checked against the actual electoral roll — null = not stated. */
+  electoralRollRegistered: boolean | null;
+  /** True once fullName + dateOfBirth + postalAddress are all set. Means
+   * "the account holder has stated all three", not "verified against an
+   * official register" — the app has no access to one. */
+  identityConfirmed: boolean;
 }
 
 export type DisputeStatus = "SENT" | "RESOLVED" | "NO_RESPONSE";

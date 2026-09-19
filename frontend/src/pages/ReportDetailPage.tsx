@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import {
   ContactsResponse,
@@ -192,6 +192,14 @@ export function ReportDetailPage() {
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-semibold text-slate-100">{data.report.sourceFileName}</h1>
             <RiskBadge label={data.insights.riskLevel} />
+            {data.report.isSample && (
+              <span
+                title="Fictional fixture data, not a real credit report"
+                className="rounded-full bg-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warn"
+              >
+                Sample data
+              </span>
+            )}
           </div>
           <p className="mt-1 text-sm text-slate-400">
             {data.report.bureau} · {data.report.applicantName ?? "name not detected"}
@@ -286,6 +294,26 @@ export function ReportDetailPage() {
           </p>
         </div>
       )}
+
+      <div
+        className={`mt-4 rounded-lg border px-4 py-3 text-sm ${
+          data.identityCheck.overallMatch === false
+            ? "border-critical/40 bg-critical/10 text-critical"
+            : data.identityCheck.overallMatch === true
+              ? "border-good/40 bg-good/10 text-good"
+              : "border-border bg-panel text-slate-400"
+        }`}
+      >
+        {data.identityCheck.message}
+        {!data.identityCheck.profileConfirmed && (
+          <>
+            {" "}
+            <Link to="/settings" className="underline hover:text-accent">
+              Go to Settings
+            </Link>
+          </>
+        )}
+      </div>
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard label="Total accounts" value={data.stats.totalAccounts} />

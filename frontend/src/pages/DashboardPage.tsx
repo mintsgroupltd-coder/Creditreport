@@ -89,7 +89,17 @@ export function DashboardPage() {
                   className="group flex items-center justify-between rounded-lg border border-border bg-panel px-5 py-4 hover:border-accent"
                 >
                   <div>
-                    <div className="text-sm font-medium text-slate-100 group-hover:text-accent group-hover:underline">{r.sourceFileName}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-slate-100 group-hover:text-accent group-hover:underline">{r.sourceFileName}</span>
+                      {r.isSample && (
+                        <span
+                          title="Fictional fixture data, not a real credit report"
+                          className="rounded-full bg-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warn"
+                        >
+                          Sample data
+                        </span>
+                      )}
+                    </div>
                     <div className="mt-0.5 text-xs text-slate-400">
                       {r.bureau} · {r.applicantName ?? "name not detected"} · uploaded {new Date(r.uploadedAt).toLocaleDateString("en-GB")}
                     </div>

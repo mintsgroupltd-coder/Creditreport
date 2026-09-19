@@ -56,6 +56,12 @@ export interface DisputeLetterInput {
    * the Act requires the notice to be "drawn up by the objector". Only
    * used by the "notice_of_correction" template. */
   correctionStatement?: string | null;
+  /** Self-declared by the user in Settings — never independently
+   * checked against the actual electoral roll (no API for that exists
+   * here). Only ever used to ADD a supporting line when explicitly
+   * true; `false` or `null` adds nothing, since a letter shouldn't
+   * volunteer information that weakens the user's own case. */
+  electoralRollRegistered?: boolean | null;
 }
 
 export function listDisputeTemplates(input: DisputeLetterInput): DisputeTemplateOption[] {
@@ -143,6 +149,17 @@ function bureauContact(bureau: DisputeLetterInput["bureau"]): ContactEntry | und
   return bureau !== "UNKNOWN" ? BUREAU_CONTACTS[bureau] : undefined;
 }
 
+/** A supporting sentence for the identity-type letters, added only when
+ * the user has explicitly said (in Settings) that they're on the
+ * electoral roll at their current address — CRAs commonly weigh
+ * electoral roll registration when resolving an identity/address
+ * dispute. Self-declared, so the letter is honest about that rather
+ * than presenting it as something the app checked. */
+function electoralRollLine(input: DisputeLetterInput): string[] {
+  if (input.electoralRollRegistered !== true) return [];
+  return ["I am registered on the electoral roll at my current address, which I'd ask you to take into account when investigating this.", ""];
+}
+
 function buildIdentityLetter(input: DisputeLetterInput): LetterBody {
   const contact = bureauContact(input.bureau);
   const bodyLines: string[] = [
@@ -158,6 +175,7 @@ function buildIdentityLetter(input: DisputeLetterInput): LetterBody {
     bodyLines.push(message);
     bodyLines.push("");
   }
+  bodyLines.push(...electoralRollLine(input));
   bodyLines.push(
     "Please investigate how this discrepancy arose, contact the organisation(s) concerned to have my details corrected, or confirm in writing if these records do not in fact belong to me."
   );
@@ -265,6 +283,7 @@ function buildNoticeOfCorrectionLetter(input: DisputeLetterInput): LetterBody {
     bodyLines.push("");
   }
 
+  bodyLines.push(...electoralRollLine(input));
   bodyLines.push(
     `Please confirm, within 28 days as required by section 159(4) of the Act, that you have received this notice and that you intend to comply with it. If you consider this notice to be incorrect, defamatory, frivolous, scandalous, or otherwise unsuitable for publication, please tell me your reasons in writing — if we cannot agree, either of us may then apply to ${ICO_CONTACT.name}, which is the relevant authority for an individual under section 159(8) of the Act, to resolve the matter.`
   );

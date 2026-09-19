@@ -2,8 +2,12 @@ import { ParsedAccount, ParsedReport } from "../parsing/types";
 import { normalizeLenderName } from "../parsing/shared";
 import { AlertFinding } from "./types";
 
-/** "OLAOYE TAYO" -> Set{"OLAOYE","TAYO"} — order-insensitive so "TAYO OLAOYE" doesn't false-positive. */
-function nameTokens(name: string): Set<string> {
+/** "OLAOYE TAYO" -> Set{"OLAOYE","TAYO"} — order-insensitive so "TAYO OLAOYE" doesn't false-positive.
+ * Exported so identityCheck.ts can compare a report's self-reported
+ * applicant name against the user's own confirmed profile name using
+ * the exact same matching rule, rather than a second, possibly
+ * inconsistent implementation. */
+export function nameTokens(name: string): Set<string> {
   return new Set(
     name
       .toUpperCase()
@@ -12,7 +16,7 @@ function nameTokens(name: string): Set<string> {
   );
 }
 
-function sameTokenSet(a: Set<string>, b: Set<string>): boolean {
+export function sameTokenSet(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false;
   for (const t of a) if (!b.has(t)) return false;
   return true;

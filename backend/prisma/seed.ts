@@ -91,6 +91,7 @@ async function main() {
     sourceFileType: "pdf",
     rawText: FIXTURE_REPORT_TEXT,
     parsed,
+    isSample: true,
   });
 
   console.log(`Seeded user ${email} / password "${password}"`);

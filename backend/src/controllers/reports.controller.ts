@@ -13,6 +13,7 @@ import {
   generateDisputeText,
   listDisputeTemplates,
 } from "../services/analytics/disputeTextGenerator";
+import { checkProfileIdentityMatch } from "../services/analytics/identityCheck";
 import { DisputeScheduleRow, EnvelopeSize, renderDisputeLetterPdf, SignatureMode } from "../services/pdf/disputeLetterPdf";
 
 export async function uploadReport(req: AuthenticatedRequest, res: Response) {
@@ -58,6 +59,7 @@ export async function listReports(req: AuthenticatedRequest, res: Response) {
       sourceFileName: true,
       uploadedAt: true,
       applicantName: true,
+      isSample: true,
       _count: { select: { accounts: true, alerts: true } },
     },
   });
@@ -148,6 +150,19 @@ export async function getReport(req: AuthenticatedRequest, res: Response) {
     if (a.bureauRef) accountIdByBureauRef.set(a.bureauRef, a.id);
   }
 
+  const profile = await prisma.user.findUnique({
+    where: { id: req.user!.id },
+    select: { fullName: true, dateOfBirth: true, identityConfirmedAt: true },
+  });
+  const identityCheck = checkProfileIdentityMatch(
+    { applicantName: report.applicantName, dateOfBirth: report.dateOfBirth ? report.dateOfBirth.toISOString().slice(0, 10) : null },
+    {
+      fullName: profile?.fullName ?? null,
+      dateOfBirth: profile?.dateOfBirth ? profile.dateOfBirth.toISOString().slice(0, 10) : null,
+      confirmed: Boolean(profile?.identityConfirmedAt),
+    }
+  );
+
   res.json({
     report: {
       id: report.id,
@@ -157,7 +172,9 @@ export async function getReport(req: AuthenticatedRequest, res: Response) {
       applicantName: report.applicantName,
       dateOfBirth: report.dateOfBirth,
       addresses: report.addresses,
+      isSample: report.isSample,
     },
+    identityCheck,
     insights: {
       riskLevel: report.riskLevel ?? "LOW",
       summary: report.summary ?? "No summary was generated for this report.",
@@ -241,16 +258,37 @@ export async function getReportComparison(req: AuthenticatedRequest, res: Respon
  * actually lives, since the raw "recorded name/DOB" fields it was
  * computed from aren't kept in the database) plus CCJ events and
  * in-default accounts, plus the user's own saved name/address (if any) so
- * the "[Your name]" / "[Your address]" placeholders can be filled in. */
+ * the "[Your name]" / "[Your address]" placeholders can be filled in. Also
+ * folds in a live profile-vs-report identity check (see
+ * services/analytics/identityCheck.ts) — computed here rather than
+ * persisted as an Alert, so it can never go stale if the user fills in
+ * their profile after the report was already uploaded. */
 async function buildDisputeLetterInput(report: OwnedReport, userId: string, correctionStatement?: string): Promise<DisputeLetterInput> {
-  const profile = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true, postalAddress: true } });
+  const profile = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { fullName: true, postalAddress: true, dateOfBirth: true, electoralRollRegistered: true, identityConfirmedAt: true },
+  });
+
+  const identityCheck = checkProfileIdentityMatch(
+    { applicantName: report.applicantName, dateOfBirth: report.dateOfBirth ? report.dateOfBirth.toISOString().slice(0, 10) : null },
+    {
+      fullName: profile?.fullName ?? null,
+      dateOfBirth: profile?.dateOfBirth ? profile.dateOfBirth.toISOString().slice(0, 10) : null,
+      confirmed: Boolean(profile?.identityConfirmedAt),
+    }
+  );
+
+  const identityAlertMessages = report.alerts
+    .filter((a: OwnedAlert) => a.type === "DOB_MISMATCH" || a.type === "NAME_VARIATION" || a.type === "MIXED_FILE_RISK")
+    .map((a: OwnedAlert) => a.message);
+  if (identityCheck.overallMatch === false) identityAlertMessages.push(identityCheck.message);
+
   return {
     bureau: report.bureau,
     applicantName: report.applicantName,
     dateOfBirth: report.dateOfBirth ? report.dateOfBirth.toISOString().slice(0, 10) : undefined,
-    identityAlertMessages: report.alerts
-      .filter((a: OwnedAlert) => a.type === "DOB_MISMATCH" || a.type === "NAME_VARIATION" || a.type === "MIXED_FILE_RISK")
-      .map((a: OwnedAlert) => a.message),
+    identityAlertMessages,
+    electoralRollRegistered: profile?.electoralRollRegistered ?? null,
     ccjs: report.events
       .filter((e: OwnedEvent) => e.type === "CCJ" && (e.detail as Record<string, unknown> | null)?.isSatisfied !== true)
       .map((e: OwnedEvent) => ({

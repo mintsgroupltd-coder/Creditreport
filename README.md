@@ -42,15 +42,22 @@ This is a working scaffold, not a hardened production system. Specifically:
   `src/services/analytics/disputeTextGenerator.test.ts` covers the
   formal notice-of-correction letter (correct statutory citations, ICO
   not FOS, never "legally binding", the statement quoted verbatim
-  rather than paraphrased, the 200-word-limit warning). The analytics
-  engine's anomaly detection and the other parsers still don't have
-  coverage — this is a starting point, not a finished suite.
-- **Statutory dispute tools (Phase 1 of the auditor/dispute-engine
-  work) are in place** — see [§ Statutory dispute tools](#statutory-dispute-tools)
-  for the notice-of-correction template, envelope-ready PDF export, and
-  postage-record/milestone tracker. Phase 2 (a verified-vs-demo identity
-  split feeding the anomaly engines and letters) and Phase 3 (a visual
-  PDF inspector and tri-bureau reconciliation) aren't built yet.
+  rather than paraphrased, the 200-word-limit warning) and the
+  electoral-roll supporting line (added only when explicitly true, and
+  only to identity-type letters); `src/services/analytics/identityCheck.test.ts`
+  covers the profile-vs-report comparison (unconfirmed profile, name
+  match tolerant of word order, name/DOB mismatches, and the
+  nothing-to-compare case). The analytics engine's internal anomaly
+  detection and the other parsers still don't have coverage — this is
+  a starting point, not a finished suite.
+- **Phases 1 and 2 of the auditor/dispute-engine work are in place** —
+  see [§ Statutory dispute tools](#statutory-dispute-tools) for the
+  notice-of-correction template, envelope-ready PDF export, and
+  postage-record/milestone tracker; [§ Confirmed identity vs. report
+  data](#confirmed-identity-vs-report-data) for the self-declared
+  profile identity that now feeds the anomaly checks and letters, and
+  the sample-vs-real report badge. Phase 3 (a visual PDF inspector and
+  tri-bureau reconciliation) isn't built yet.
 - **Prisma's engine binaries need internet access to install.**
   `npx prisma generate` downloads a query-engine binary on first run.
   If you're behind a restrictive proxy/firewall, allow
@@ -149,16 +156,22 @@ commands in that case.
 
 Defined in `backend/prisma/schema.prisma`:
 
-- **User** — email + bcrypt password hash, an optional `fullName` /
-  `postalAddress` (used only to auto-fill dispute letters — see
-  `profile.controller.ts`), and a hashed password-reset token +
-  expiry (never the raw token — see § Password reset).
+- **User** — email + bcrypt password hash, a hashed password-reset
+  token + expiry (never the raw token — see § Password reset), and the
+  account holder's own **self-declared** identity: `fullName` /
+  `postalAddress` / `dateOfBirth` (used to auto-fill dispute letters —
+  see `profile.controller.ts`), `electoralRollRegistered` (a tri-state
+  self-declaration, never checked against an actual register), and
+  `identityConfirmedAt` (set once all three of name/DOB/address are
+  filled in — see § Confirmed identity vs. report data below).
 - **Report** — one row per upload. Holds the bureau, the applicant's
   name/DOB/addresses *as read off the report itself* (not the user's
   account details — these can and do differ, which is exactly what
-  the DOB-mismatch check looks for), the raw extracted text (kept
-  so re-analysis never needs a re-upload), and the risk summary
-  computed at upload time.
+  the DOB-mismatch check, and the separate profile-vs-report check,
+  look for), the raw extracted text (kept so re-analysis never needs a
+  re-upload), the risk summary computed at upload time, and `isSample`
+  (true only for `prisma/seed.ts`'s fixture report, so the UI can badge
+  it clearly rather than let it be mistaken for a real upload).
 - **Lender** — deduplicated by a normalized name
   (`normalizeLenderName()` strips "LTD"/"PLC"/etc and punctuation), so
   "JC International Acquisition LLC" appearing on three different
@@ -199,7 +212,7 @@ also rate-limited (`middleware/rateLimit.ts`).
 | `POST /api/auth/reset-password` | Body `{ token, password }` — sets a new password if the token is valid and unexpired (1 hour) |
 | `POST /api/reports` | Multipart upload (`file` field, PDF or CSV) → extract text → parse → persist → returns `{ reportId, riskSummary }` |
 | `GET /api/reports` | List the caller's reports with account/alert counts |
-| `GET /api/reports/:id` | Full report detail: stats, accounts, events, alerts (each with `relatedAccountIds`), plus `insights` (risk level, plain-English summary, suggested actions) and `negativeMarkers` (CCJ/default/utilisation/search counts and totals) |
+| `GET /api/reports/:id` | Full report detail: stats, accounts, events, alerts (each with `relatedAccountIds`), `insights` (risk level, plain-English summary, suggested actions), `negativeMarkers` (CCJ/default/utilisation/search counts and totals), and `identityCheck` (live comparison of this report's own application details against the caller's confirmed profile — see § Confirmed identity vs. report data) |
 | `GET /api/reports/:id/compare` | Compares this report's stats/negative markers/risk level against the user's most recent earlier report (same bureau preferred), for tracking progress after a dispute — returns `{ hasPrevious: false }` if there isn't one |
 | `GET /api/reports/:id/dispute-templates` | Lists the dispute letter templates available for this report (`auto`, `identity`, `ccj`, `default_validation`, `general_accuracy`, `notice_of_correction`), each flagged `relevant: true/false` based on what was actually found on the report |
 | `GET /api/reports/:id/dispute-text?template=<id>&correctionStatement=<text>` | Plain-text dispute letter body for the chosen template (defaults to `auto`), built from the report's already-persisted alerts/events/accounts plus the caller's saved name/address if set. `correctionStatement` is only used by `notice_of_correction` — see § Statutory dispute tools below |
@@ -208,7 +221,7 @@ also rate-limited (`middleware/rateLimit.ts`).
 | `GET /api/accounts/:id` | One account's detail (including `lenderContactAddress`) plus its merged timeline (monthly history + dated events) |
 | `PATCH /api/accounts/:id/lender-contact` | Set or clear the postal address for that account's lender (shared across every account for the same lender) |
 | `GET /api/contacts` | Verified UK postal addresses/contact details for Experian, Equifax, TransUnion, the CCJ court centre (Civil National Business Centre), the ICO, and the Financial Ombudsman Service |
-| `GET /api/profile` / `PATCH /api/profile` | Read/update the caller's saved `fullName` / `postalAddress`, used only to auto-fill dispute letters |
+| `GET /api/profile` / `PATCH /api/profile` | Read/update the caller's self-declared `fullName` / `postalAddress` / `dateOfBirth` / `electoralRollRegistered`; response includes `identityConfirmed` (true once name/DOB/address are all set) — see § Confirmed identity vs. report data |
 | `POST /api/disputes` | Body `{ reportId, templateId, recipient }` — logs that a dispute letter was sent, with a computed follow-up deadline |
 | `GET /api/disputes?reportId=<id>` | Lists dispute records for a report |
 | `PATCH /api/disputes/:id` | Body `{ status?, notes? }` — mark a dispute `RESOLVED` / `NO_RESPONSE`, or add notes |
@@ -252,16 +265,21 @@ a second round trip.
   improved/worse deltas (a decrease in CCJs/defaults/etc is "better").
 
 Pages: `DashboardPage` (list + upload, with a "how it works" walkthrough
-for new users), `ReportDetailPage` (risk summary and suggested actions,
-charts, negative-markers table, progress-over-time comparison, useful
-contacts, a dispute-template picker — including envelope (C5/DL) and
-signature-mode (typed/blank) selectors for the PDF export, and a
-200-word statement box with a live counter when the "notice of
-correction" template is picked — with copy-to-clipboard/PDF export and
-sent-dispute tracking, alerts, accounts, and a delete button so a
-report can be removed and re-uploaded), `AccountDetailPage` (single
-account, an editable lender/agent contact address, balance chart, and
-timeline), `SettingsPage` (saved name/address for letter auto-fill),
+for new users and a "Sample data" badge on the seeded fixture report),
+`ReportDetailPage` (a profile-vs-report identity-check banner, risk
+summary and suggested actions, charts, negative-markers table,
+progress-over-time comparison, useful contacts, a dispute-template
+picker — including envelope (C5/DL) and signature-mode (typed/blank)
+selectors for the PDF export, and a 200-word statement box with a live
+counter when the "notice of correction" template is picked — with
+copy-to-clipboard/PDF export and sent-dispute tracking, alerts,
+accounts, and a delete button so a report can be removed and
+re-uploaded), `AccountDetailPage` (single account, an editable
+lender/agent contact address, balance chart, and timeline),
+`SettingsPage` (self-declared name/date of birth/address for letter
+auto-fill and the profile-vs-report check, an electoral-roll
+registration note, and a confirmed/not-confirmed identity banner — all
+explicitly labelled as self-declared, never independently verified),
 `ForgotPasswordPage` / `ResetPasswordPage`. Auth state lives in
 `AuthContext` and the JWT sits in `localStorage`.
 
@@ -332,6 +350,53 @@ reconciliation) aren't built yet.
   escalation becomes available; for an advisory letter (CCJ/debt
   validation), just a suggested follow-up date, since those have no
   fixed statutory deadline or s.159 escalation route.
+
+## Confirmed identity vs. report data
+
+Phase 2 of the auditor/dispute-engine work: a logged-in user's own
+stated identity now feeds the anomaly checks and letters, kept
+strictly separate from whatever a given report claims about itself.
+
+- **What "confirmed" means, precisely.** `GET/PATCH /api/profile`
+  (`profile.controller.ts`) now also accepts `dateOfBirth` and
+  `electoralRollRegistered`. Once `fullName`, `dateOfBirth` and
+  `postalAddress` are all non-blank, `identityConfirmedAt` is set and
+  the API reports `identityConfirmed: true`. This means **the account
+  holder has stated all three fields themselves** — nothing here is
+  checked against DVLA, the electoral roll, a CRA, or any other
+  official register, because the app has no access to one. Every place
+  this is surfaced (Settings, the report page) says so explicitly,
+  the same way the envelope/contact-address caveats elsewhere in this
+  app never overstate what's actually been checked.
+- **The profile-vs-report check**
+  (`services/analytics/identityCheck.ts`, `checkProfileIdentityMatch`).
+  The existing anomaly engine (`anomalyDetection.ts`) only ever
+  compared each *account* against the report's own "Application
+  Details" section — it had no way to catch the report's own applicant
+  block itself being wrong (wrong file uploaded, or the bureau's own
+  top-level record is off). This new check compares the report's
+  self-reported name/DOB against the user's separately confirmed
+  profile instead, reusing the exact same order-insensitive name
+  matching (`nameTokens`/`sameTokenSet`, now exported from
+  `anomalyDetection.ts` so the two never drift). It's computed **live**
+  in `GET /api/reports/:id` (new `identityCheck` field) and inside
+  `buildDisputeLetterInput`, rather than persisted as an `Alert` at
+  upload time — so filling in your profile *after* uploading a report
+  still checks it correctly, with no backfill needed. A mismatch is
+  folded into `identityAlertMessages` alongside the internal checks, so
+  it shows up in the identity and notice-of-correction letters too.
+- **Electoral roll registration** is purely a supporting line: when
+  `electoralRollRegistered === true`, the identity and
+  notice-of-correction letters add one sentence noting it (CRAs
+  themselves often weigh electoral roll status when resolving an
+  identity/address dispute); `false` or unset adds nothing — a letter
+  arguing your own case shouldn't volunteer information that weakens
+  it, and this app never fabricates evidence either way.
+- **Sample vs. real data.** `prisma/seed.ts`'s fixture report is now
+  the only report ever created with `isSample: true`; the dashboard and
+  report page both badge it "Sample data" so a demo/dev account's
+  fictional report is never confused with — or, since each user only
+  sees their own reports, mixed up with — a real upload.
 
 ## Parsing engine
 

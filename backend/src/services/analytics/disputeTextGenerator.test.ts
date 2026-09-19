@@ -76,6 +76,30 @@ describe("generateDisputeText — notice_of_correction", () => {
   });
 });
 
+describe("electoral roll supporting line", () => {
+  it("is omitted entirely when the user hasn't said they're registered", () => {
+    const withUnset = generateDisputeText(BASE_INPUT, "identity");
+    const withFalse = generateDisputeText({ ...BASE_INPUT, electoralRollRegistered: false }, "identity");
+    expect(withUnset.toLowerCase()).not.toContain("electoral roll");
+    expect(withFalse.toLowerCase()).not.toContain("electoral roll");
+  });
+
+  it("is added to the identity and notice-of-correction letters when the user says they're registered", () => {
+    const identity = generateDisputeText({ ...BASE_INPUT, electoralRollRegistered: true }, "identity");
+    const notice = generateDisputeText({ ...BASE_INPUT, electoralRollRegistered: true, correctionStatement: "Wrong entry." }, "notice_of_correction");
+    expect(identity.toLowerCase()).toContain("electoral roll");
+    expect(notice.toLowerCase()).toContain("electoral roll");
+  });
+
+  it("never appears in templates that aren't about identity (CCJ, debt validation)", () => {
+    const ccj = generateDisputeText(
+      { ...BASE_INPUT, electoralRollRegistered: true, ccjs: [{ date: "2023-03-02", amount: 1250 }] },
+      "ccj"
+    );
+    expect(ccj.toLowerCase()).not.toContain("electoral roll");
+  });
+});
+
 describe("buildDisputeLetterParts", () => {
   it("splits the same letter into sender/recipient/date/body without changing its content", () => {
     const input = { ...BASE_INPUT, correctionStatement: "This entry is wrong." };

@@ -10,6 +10,9 @@ interface SaveReportInput {
   sourceFileType: "pdf" | "csv";
   rawText: string;
   parsed: ParsedReport;
+  /** True only for prisma/seed.ts's fixture report — see Report.isSample
+   * in schema.prisma. Defaults false; every real upload leaves it unset. */
+  isSample?: boolean;
 }
 
 /**
@@ -20,7 +23,7 @@ interface SaveReportInput {
  * engine against the just-parsed data — Alerts. Everything happens in
  * one transaction so a partially-saved report is never visible.
  */
-export async function saveParsedReport({ userId, sourceFileName, sourceFileType, rawText, parsed }: SaveReportInput) {
+export async function saveParsedReport({ userId, sourceFileName, sourceFileType, rawText, parsed, isSample }: SaveReportInput) {
   const riskSummary = buildRiskSummary(parsed);
 
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -31,6 +34,7 @@ export async function saveParsedReport({ userId, sourceFileName, sourceFileType,
         sourceFileName,
         sourceFileType,
         rawText,
+        isSample: isSample ?? false,
         applicantName: parsed.applicantName,
         dateOfBirth: parsed.dateOfBirth ? new Date(parsed.dateOfBirth) : undefined,
         addresses: parsed.addresses as unknown as Prisma.InputJsonValue,

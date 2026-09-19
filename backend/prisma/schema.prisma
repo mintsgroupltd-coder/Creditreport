@@ -64,11 +64,30 @@ model User {
   passwordHash String
   createdAt    DateTime @default(now())
 
-  // Used to auto-fill the "[Your name]" / "[Your address]" placeholders
-  // in generated dispute letters. Optional — letters still work with the
-  // bracketed placeholders if these are left blank.
+  // The user's own confirmed identity — used to auto-fill the
+  // "[Your name]" / "[Your address]" placeholders in generated dispute
+  // letters, and (once all three of fullName/dateOfBirth/postalAddress
+  // are set) to cross-check each report's own self-reported application
+  // details against what the user themselves says is true, catching a
+  // case even the internal mixed-file check can't: a report whose own
+  // "Application Details" section doesn't match the account holder.
+  // "Confirmed" here means self-declared by the account holder, NOT
+  // independently verified against any official register — the app
+  // doesn't have access to one, and says so wherever this is shown.
   fullName      String?
-  postalAddress String? @db.Text
+  postalAddress String?   @db.Text
+  dateOfBirth   DateTime?
+  // Self-declared, not checked against the actual electoral roll (no
+  // API for that exists for this app to call) — offered because CRAs
+  // themselves often weigh electoral roll registration when resolving
+  // an identity/address dispute, so it's useful supporting context in
+  // a letter when the user says they're registered. Null = not stated.
+  electoralRollRegistered Boolean?
+  // Set once fullName + dateOfBirth + postalAddress are all non-blank;
+  // cleared if any of them is cleared. Drives the "confirmed" vs
+  // "unconfirmed" identity state surfaced in the UI and used to gate
+  // the profile-vs-report check above.
+  identityConfirmedAt     DateTime?
 
   // Password reset — resetTokenHash stores a SHA-256 hash of the token
   // emailed to the user (never the raw token itself), so a DB read alone
@@ -89,6 +108,11 @@ model Report {
   sourceFileName String
   sourceFileType String // "pdf" | "csv"
   uploadedAt     DateTime @default(now())
+  // True only for the fixture report created by prisma/seed.ts — lets
+  // the UI badge it clearly as sample data rather than a real upload,
+  // so it's never mistaken for (or included alongside) a user's own
+  // reports in anything identity- or dispute-related.
+  isSample       Boolean  @default(false)
 
   // Personal details as read off the report (used for anomaly detection)
   applicantName String?
