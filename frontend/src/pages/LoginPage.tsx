@@ -57,10 +57,16 @@ export function LoginPage() {
 
         {error && <p className="mt-4 text-sm text-critical">{error}</p>}
 
+        <div className="mt-2 text-right">
+          <Link to="/forgot-password" className="text-xs text-slate-400 hover:text-accent">
+            Forgot your password?
+          </Link>
+        </div>
+
         <button
           type="submit"
           disabled={loading}
-          className="mt-6 w-full rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent/90 disabled:opacity-60"
+          className="mt-4 w-full rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent/90 disabled:opacity-60"
         >
           {loading ? "Logging in…" : "Log in"}
         </button>

@@ -29,6 +29,8 @@ export function ContactsPanel({ contacts, reportBureau }: { contacts: ContactsRe
           <ContactCard key={key} contact={contacts.bureaus[key]} highlight={key === reportBureau} />
         ))}
         <ContactCard contact={contacts.court} />
+        <ContactCard contact={contacts.ico} />
+        <ContactCard contact={contacts.fos} />
       </div>
       <p className="mt-3 text-xs text-slate-500">
         Details checked against each organisation's own site as of {new Date(contacts.lastVerified).toLocaleDateString("en-GB")}. Large

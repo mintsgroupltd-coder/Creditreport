@@ -1,17 +1,34 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import { ContactsResponse, DisputeTemplateId, DisputeTemplateOption, ReportDetail } from "../api/types";
+import {
+  ContactsResponse,
+  DisputeRecordRow,
+  DisputeTemplateId,
+  DisputeTemplateOption,
+  EnvelopeSize,
+  NOTICE_OF_CORRECTION_WORD_LIMIT,
+  ReportComparison,
+  ReportDetail,
+  SignatureMode,
+} from "../api/types";
 import { AccountTable } from "../components/AccountTable";
 import { AlertList } from "../components/AlertList";
 import { AppShell } from "../components/AppShell";
 import { BarChart } from "../components/BarChart";
+import { ComparisonPanel } from "../components/ComparisonPanel";
 import { ContactsPanel } from "../components/ContactsPanel";
+import { DisputeTracker } from "../components/DisputeTracker";
 import { RiskBadge } from "../components/RiskBadge";
 import { StatCard } from "../components/StatCard";
 
 function money(value: number): string {
   return `£${Math.round(value).toLocaleString("en-GB")}`;
+}
+
+function countWords(text: string): number {
+  const trimmed = text.trim();
+  return trimmed.length === 0 ? 0 : trimmed.split(/\s+/).length;
 }
 
 export function ReportDetailPage() {
@@ -25,6 +42,14 @@ export function ReportDetailPage() {
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
   const [contacts, setContacts] = useState<ContactsResponse | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [disputes, setDisputes] = useState<DisputeRecordRow[]>([]);
+  const [recipient, setRecipient] = useState("");
+  const [markingSent, setMarkingSent] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [comparison, setComparison] = useState<ReportComparison | null>(null);
+  const [correctionStatement, setCorrectionStatement] = useState("");
+  const [envelope, setEnvelope] = useState<EnvelopeSize>("none");
+  const [signatureMode, setSignatureMode] = useState<SignatureMode>("digital");
 
   useEffect(() => {
     if (!id) return;
@@ -34,12 +59,91 @@ export function ReportDetailPage() {
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load this report."));
     api.getDisputeTemplates(id).then((res) => setTemplates(res.templates));
     api.getContacts().then(setContacts).catch(() => undefined);
+    api
+      .listDisputes(id)
+      .then((res) => setDisputes(res.disputes))
+      .catch(() => undefined);
+    api.getReportComparison(id).then(setComparison).catch(() => undefined);
   }, [id]);
+
+  // A sensible starting guess for who a given template gets sent to —
+  // still editable before "Mark as sent", since a default-validation
+  // letter's recipient (a specific lender) can't be guessed reliably.
+  useEffect(() => {
+    if (selectedTemplate === "ccj") {
+      setRecipient(contacts?.court.name ?? "Civil National Business Centre");
+    } else if (selectedTemplate === "default_validation") {
+      setRecipient("");
+    } else if (data && contacts && data.report.bureau !== "UNKNOWN" && data.report.bureau in contacts.bureaus) {
+      setRecipient(contacts.bureaus[data.report.bureau as "EXPERIAN" | "EQUIFAX" | "TRANSUNION"].name);
+    } else {
+      setRecipient(data?.report.bureau ?? "");
+    }
+  }, [selectedTemplate, contacts, data]);
 
   async function handleExportDispute() {
     if (!id) return;
-    const text = await api.getDisputeText(id, selectedTemplate);
+    const text = await api.getDisputeText(id, selectedTemplate, selectedTemplate === "notice_of_correction" ? correctionStatement : undefined);
     setDisputeText(text);
+  }
+
+  async function handleDownloadPdf() {
+    if (!id) return;
+    setDownloadingPdf(true);
+    try {
+      const blob = await api.downloadDisputePdf(id, selectedTemplate, {
+        correctionStatement: selectedTemplate === "notice_of_correction" ? correctionStatement : undefined,
+        envelope,
+        signature: signatureMode,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `dispute-letter-${selectedTemplate}${envelope !== "none" ? `-${envelope}` : ""}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not generate the PDF.");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
+
+  async function handleDownloadTrackingSheet(disputeId: string) {
+    try {
+      const blob = await api.downloadTrackingSheetPdf(disputeId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `postage-record-${disputeId}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not generate the tracking sheet.");
+    }
+  }
+
+  async function handleMarkSent() {
+    if (!id) return;
+    setMarkingSent(true);
+    try {
+      const created = await api.createDispute(id, selectedTemplate, recipient.trim() || "Recipient not specified");
+      setDisputes((prev) => [created, ...prev]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not log this dispute.");
+    } finally {
+      setMarkingSent(false);
+    }
+  }
+
+  async function handleMarkResolved(disputeId: string) {
+    const updated = await api.updateDispute(disputeId, "RESOLVED");
+    setDisputes((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+  }
+
+  async function handleMarkNoResponse(disputeId: string) {
+    const updated = await api.updateDispute(disputeId, "NO_RESPONSE");
+    setDisputes((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
   }
 
   async function handleCopy() {
@@ -94,7 +198,7 @@ export function ReportDetailPage() {
             {data.report.dateOfBirth && ` · DOB ${new Date(data.report.dateOfBirth).toLocaleDateString("en-GB")}`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <select
             value={selectedTemplate}
             onChange={(e) => setSelectedTemplate(e.target.value as DisputeTemplateId)}
@@ -108,11 +212,37 @@ export function ReportDetailPage() {
               </option>
             ))}
           </select>
+          <select
+            value={envelope}
+            onChange={(e) => setEnvelope(e.target.value as EnvelopeSize)}
+            title="Position the recipient's address to show through a window envelope when printed, with fold guides"
+            className="rounded-md border border-border bg-panel px-3 py-2 text-sm text-slate-200 hover:border-accent focus:border-accent focus:outline-none"
+          >
+            <option value="none">Plain layout</option>
+            <option value="c5">C5 window envelope</option>
+            <option value="dl">DL window envelope</option>
+          </select>
+          <select
+            value={signatureMode}
+            onChange={(e) => setSignatureMode(e.target.value as SignatureMode)}
+            title="How the letter is signed"
+            className="rounded-md border border-border bg-panel px-3 py-2 text-sm text-slate-200 hover:border-accent focus:border-accent focus:outline-none"
+          >
+            <option value="digital">Typed name (digital attestation)</option>
+            <option value="blank">Blank line for wet-ink signature</option>
+          </select>
           <button
             onClick={handleExportDispute}
             className="rounded-md border border-border px-4 py-2 text-sm font-medium text-slate-200 hover:border-accent hover:text-accent"
           >
             Export dispute text
+          </button>
+          <button
+            onClick={handleDownloadPdf}
+            disabled={downloadingPdf}
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium text-slate-200 hover:border-accent hover:text-accent disabled:opacity-50"
+          >
+            {downloadingPdf ? "Preparing…" : "Download as PDF"}
           </button>
           <button
             onClick={handleDelete}
@@ -126,6 +256,35 @@ export function ReportDetailPage() {
       </div>
       {templates.find((t) => t.id === selectedTemplate)?.description && (
         <p className="mt-2 text-right text-xs text-slate-500">{templates.find((t) => t.id === selectedTemplate)?.description}</p>
+      )}
+      {envelope === "dl" && (
+        <p className="mt-1 text-right text-xs text-warn">
+          DL window position is approximate — envelope window placement varies by manufacturer. Fold a spare sheet and check it against
+          your own envelope before using this for a time-sensitive letter.
+        </p>
+      )}
+
+      {selectedTemplate === "notice_of_correction" && (
+        <div className="mt-4 rounded-lg border border-accent/40 bg-accent/5 p-4">
+          <label htmlFor="correction-statement" className="text-sm font-semibold text-slate-100">
+            Your notice of correction statement
+          </label>
+          <p className="mt-1 text-xs text-slate-400">
+            Section 159(3) of the Consumer Credit Act 1974 requires this to be drawn up by you, not generated for you — write it in your
+            own words, describing what's wrong and what the entry should say instead. Limit: {NOTICE_OF_CORRECTION_WORD_LIMIT} words.
+          </p>
+          <textarea
+            id="correction-statement"
+            value={correctionStatement}
+            onChange={(e) => setCorrectionStatement(e.target.value)}
+            rows={4}
+            placeholder="e.g. This account does not belong to me. I have never held an account with..."
+            className="mt-2 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-slate-200 focus:border-accent focus:outline-none"
+          />
+          <p className={`mt-1 text-right text-xs ${countWords(correctionStatement) > NOTICE_OF_CORRECTION_WORD_LIMIT ? "text-critical" : "text-slate-500"}`}>
+            {countWords(correctionStatement)} / {NOTICE_OF_CORRECTION_WORD_LIMIT} words
+          </p>
+        </div>
       )}
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -218,6 +377,15 @@ export function ReportDetailPage() {
         </div>
       </section>
 
+      {comparison && (
+        <section className="mt-6">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Progress over time</h2>
+          <div className="mt-3">
+            <ComparisonPanel comparison={comparison} />
+          </div>
+        </section>
+      )}
+
       {contacts && (
         <section className="mt-6">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Useful contacts</h2>
@@ -240,8 +408,44 @@ export function ReportDetailPage() {
             </button>
           </div>
           <pre className="mt-3 whitespace-pre-wrap text-xs text-slate-300">{disputeText}</pre>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+            <label htmlFor="dispute-recipient" className="text-xs text-slate-400">
+              Sent to:
+            </label>
+            <input
+              id="dispute-recipient"
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              placeholder="e.g. the lender's name"
+              className="min-w-[220px] flex-1 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-slate-200 focus:border-accent focus:outline-none"
+            />
+            <button
+              onClick={handleMarkSent}
+              disabled={markingSent}
+              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90 disabled:opacity-50"
+            >
+              {markingSent ? "Logging…" : "Mark as sent"}
+            </button>
+          </div>
         </div>
       )}
+
+      <section className="mt-6">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Disputes sent</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Once you've posted or emailed a letter, use "Mark as sent" above to track it here — including when to expect a reply.
+        </p>
+        <div className="mt-3">
+          <DisputeTracker
+            disputes={disputes}
+            templates={templates}
+            onMarkResolved={handleMarkResolved}
+            onMarkNoResponse={handleMarkNoResponse}
+            onDownloadTrackingSheet={handleDownloadTrackingSheet}
+          />
+        </div>
+      </section>
 
       <section className="mt-8">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Data-quality alerts</h2>

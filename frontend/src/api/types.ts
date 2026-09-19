@@ -106,7 +106,15 @@ export interface AccountDetail {
   timeline: TimelinePoint[];
 }
 
-export type DisputeTemplateId = "auto" | "identity" | "ccj" | "default_validation" | "general_accuracy";
+export type DisputeTemplateId = "auto" | "identity" | "ccj" | "default_validation" | "general_accuracy" | "notice_of_correction";
+
+/** Matches backend/src/services/analytics/disputeTextGenerator.ts's
+ * NOTICE_OF_CORRECTION_WORD_LIMIT — the word limit Parliament actually
+ * set for a section 159(3) notice of correction, not a stylistic choice. */
+export const NOTICE_OF_CORRECTION_WORD_LIMIT = 200;
+
+export type EnvelopeSize = "none" | "c5" | "dl";
+export type SignatureMode = "digital" | "blank";
 
 export interface DisputeTemplateOption {
   id: DisputeTemplateId;
@@ -129,4 +137,39 @@ export interface ContactsResponse {
   lastVerified: string;
   bureaus: Record<"EXPERIAN" | "EQUIFAX" | "TRANSUNION", ContactEntry>;
   court: ContactEntry;
+  ico: ContactEntry;
+  fos: ContactEntry;
+}
+
+export interface ProfileResponse {
+  email: string;
+  fullName: string | null;
+  postalAddress: string | null;
+}
+
+export type DisputeStatus = "SENT" | "RESOLVED" | "NO_RESPONSE";
+
+export interface DisputeRecordRow {
+  id: string;
+  reportId: string;
+  templateId: string;
+  recipient: string;
+  sentAt: string;
+  responseDeadline: string | null;
+  deadlineBasis: "statutory" | "advisory" | null;
+  status: DisputeStatus;
+  resolvedAt: string | null;
+  notes: string | null;
+}
+
+export interface DisputeListResponse {
+  disputes: DisputeRecordRow[];
+}
+
+export interface ReportComparison {
+  hasPrevious: boolean;
+  previousReport?: { id: string; bureau: Bureau; uploadedAt: string; sourceFileName: string };
+  riskLevel?: { previous: string; current: string };
+  stats?: { previous: ReportDetail["stats"]; current: ReportDetail["stats"] };
+  negativeMarkers?: { previous: NegativeMarkers; current: NegativeMarkers };
 }

@@ -58,4 +58,46 @@ export const COURT_CONTACT: ContactEntry = {
   note: "Always quote your claim number. To get a Certificate of Satisfaction once a judgment is paid, file form N443 with the issuing court.",
 };
 
-export const CONTACTS_LAST_VERIFIED = "2026-09-16";
+/**
+ * The Information Commissioner's Office — under CCA 1974 s.159(8), the
+ * ICO ("the relevant authority" for an individual, as opposed to the FCA
+ * for partnerships/unincorporated bodies) is who a consumer applies to if
+ * a credit reference agency doesn't act on a s.159 correction/notice-of-
+ * correction request properly. This is a genuinely different remedy from
+ * the Financial Ombudsman Service below — see FOS_CONTACT's note.
+ *
+ * IMPORTANT: the ICO announced in June 2025 that its head office is
+ * relocating from Wilmslow to Manchester, with the move expected around
+ * autumn 2026 — i.e. possibly already underway as this address was
+ * checked. Confirm the current address on the page below before posting
+ * anything time-sensitive.
+ */
+export const ICO_CONTACT: ContactEntry = {
+  name: "Information Commissioner's Office (ICO)",
+  role:
+    "The UK's data protection regulator. For a Consumer Credit Act 1974 s.159 dispute, this is who to escalate to if a credit reference agency doesn't respond properly to a correction request or a notice of correction — not the Financial Ombudsman Service.",
+  addressLines: ["Information Commissioner's Office", "Wycliffe House", "Water Lane", "Wilmslow", "Cheshire", "SK9 5AF"],
+  phone: "0303 123 1113",
+  sourceUrl: "https://ico.org.uk/global/privacy-notice/controller-s-contact-details/",
+  note: "The ICO is relocating its head office from Wilmslow to Manchester around autumn 2026 — double-check this address on the page above before posting anything time-sensitive.",
+};
+
+/**
+ * The Financial Ombudsman Service — for complaints about how a
+ * *regulated firm* (a bank, lender, or debt collector) has conducted
+ * itself, e.g. an unfair debt collection practice or a mishandled
+ * complaint. This is NOT the escalation route for a credit reference
+ * agency's data-correction duties under CCA 1974 s.159 — that goes to
+ * the ICO above. The two are easy to conflate; this app deliberately
+ * keeps them distinct.
+ */
+export const FOS_CONTACT: ContactEntry = {
+  name: "Financial Ombudsman Service (FOS)",
+  role:
+    "Handles complaints about how a regulated financial firm (a bank, lender, or debt collector) has treated you — for example an unfair debt collection practice. Use this for a conduct complaint against a firm, not for a credit reference agency's data-correction duties (that's the ICO, above).",
+  addressLines: ["Financial Ombudsman Service", "Exchange Tower", "London", "E14 9SR"],
+  phone: "0800 023 4567",
+  sourceUrl: "https://www.financial-ombudsman.org.uk/contact-us",
+};
+
+export const CONTACTS_LAST_VERIFIED = "2026-09-19";

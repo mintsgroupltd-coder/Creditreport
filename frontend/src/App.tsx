@@ -3,8 +3,11 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
 import { AccountDetailPage } from "./pages/AccountDetailPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ReportDetailPage } from "./pages/ReportDetailPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { SignupPage } from "./pages/SignupPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -18,6 +21,8 @@ export function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route
         path="/"
         element={
@@ -39,6 +44,14 @@ export function App() {
         element={
           <RequireAuth>
             <AccountDetailPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <RequireAuth>
+            <SettingsPage />
           </RequireAuth>
         }
       />

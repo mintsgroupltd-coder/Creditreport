@@ -52,12 +52,32 @@ enum AlertSeverity {
   CRITICAL
 }
 
+enum DisputeStatus {
+  SENT
+  RESOLVED
+  NO_RESPONSE
+}
+
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
   passwordHash String
   createdAt    DateTime @default(now())
-  reports      Report[]
+
+  // Used to auto-fill the "[Your name]" / "[Your address]" placeholders
+  // in generated dispute letters. Optional — letters still work with the
+  // bracketed placeholders if these are left blank.
+  fullName      String?
+  postalAddress String? @db.Text
+
+  // Password reset — resetTokenHash stores a SHA-256 hash of the token
+  // emailed to the user (never the raw token itself), so a DB read alone
+  // can't be used to reset the account.
+  resetTokenHash      String?   @unique
+  resetTokenExpiresAt DateTime?
+
+  reports        Report[]
+  disputeRecords DisputeRecord[]
 }
 
 /// One uploaded/parsed credit report belonging to a user.
@@ -84,9 +104,10 @@ model Report {
   summary          String? @db.Text
   suggestedActions Json? // string[]
 
-  accounts Account[]
-  events   Event[]
-  alerts   Alert[]
+  accounts       Account[]
+  events         Event[]
+  alerts         Alert[]
+  disputeRecords DisputeRecord[]
 
   @@index([userId])
 }
@@ -178,4 +199,31 @@ model Alert {
   createdAt    DateTime      @default(now())
 
   @@index([reportId])
+}
+
+/// A record that a dispute/query letter was sent for a report, so
+/// progress can be tracked (sent -> resolved / no response) alongside a
+/// suggested follow-up date. The deadline is advisory except for the
+/// bureau-directed templates, where UK credit reference agencies commonly
+/// commit to a 28-day investigation window (Consumer Credit Act 1974
+/// s.159 / ICO guidance) — see `deadlineBasis`.
+model DisputeRecord {
+  id       String @id @default(cuid())
+  reportId String
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  templateId String // DisputeTemplateId, e.g. "identity" | "ccj" | "default_validation" | "general_accuracy" | "auto"
+  recipient  String // short label, e.g. "Experian", "Civil National Business Centre", or a lender name
+
+  sentAt           DateTime      @default(now())
+  responseDeadline DateTime?
+  deadlineBasis    String? // "statutory" | "advisory"
+  status           DisputeStatus @default(SENT)
+  resolvedAt       DateTime?
+  notes            String?       @db.Text
+
+  @@index([reportId])
+  @@index([userId])
 }
