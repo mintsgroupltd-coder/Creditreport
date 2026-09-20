@@ -139,43 +139,69 @@ This is a working scaffold, not a hardened production system. Specifically:
 
 ## Guided workflow & feature map
 
-A persistent stepper (`frontend/src/components/RemediationStepper.tsx`,
-hosted at `/remediate/:step`) walks a user through 5 stages, each one
-reusing an existing page/endpoint rather than duplicating its logic:
+The app's primary navigation (`frontend/src/components/AppShell.tsx`) is
+built around one main call to action — a "Guided flow" pill, always
+visible — plus a "More" menu for the secondary/advanced tools
+(reconciliation, statutory registry, Equifax simulation, enhancement
+suite, API docs) so the everyday path isn't competing with seven equally
+weighted tabs. Settings and log out live under the account menu, not the
+main nav.
 
-1. **Ingest & Connect** (`/remediate/1`) — upload a PDF/CSV via the shared
+A persistent stepper (`frontend/src/components/RemediationStepper.tsx`,
+hosted at `/remediate/:step`) walks a user through 5 stages. Each step
+fetches and shows a **live preview of the user's own data inline** (risk
+level, negative-marker counts, discrepancy count, dispute counts) rather
+than just linking out with no context — the full page is always one click
+further for anyone who wants to go deeper, but the step itself already
+answers "what does this mean for me right now":
+
+1. **Upload** (`/remediate/1`) — upload a PDF/CSV via the shared
    `ReportUploadForm`, or open one of the three seeded sample reports
    (mixed-file case study, clean prime profile, adverse defaults profile
-   — see `backend/prisma/seed.ts`) from the dashboard.
-2. **Forensic Quality Audit** (`/remediate/2`) — links to the uploaded
-   report's own detail page, which surfaces the anomaly/mixed-file alerts
+   — see `backend/prisma/seed.ts`) from the dashboard. A fresh upload —
+   from this step or straight from the dashboard — lands on step 2 next,
+   not the raw report page, so the guided flow is the default path rather
+   than an opt-in detour.
+2. **Audit** (`/remediate/2`) — an inline summary (risk badge, plain-
+   English summary, default/CCJ/utilisation/search-count tiles, top
+   suggested actions) pulled from the same report data as the full detail
+   page, which surfaces the anomaly/mixed-file alerts
    (`services/analytics/anomalyDetection.ts`) and an illustrative
    per-bureau score estimate on that report's own bureau scale (Experian
    /999, Equifax /1000, TransUnion /710 — see
    `services/analytics/creditScoreEstimate.ts`; **this is this app's own
    transparent estimate, never a real bureau score** — see that file's
    doc comment for exactly why one can't be reproduced).
-3. **Multi-Bureau Reconciliation** (`/remediate/3`) — links to
-   `/reconciliation`, which now also computes a debt-to-credit-limit ratio
-   per cell where both figures are known, and offers a CSV export
+3. **Reconcile** (`/remediate/3`) — an inline discrepancy count and the
+   list of bureaus included, from the same endpoint behind
+   `/reconciliation`, which computes a debt-to-credit-limit ratio per cell
+   where both figures are known and offers a CSV export
    (`GET /api/reconciliation/export.csv`) and a print-friendly view for
    handing a summary to a broker or adviser.
-4. **Statutory Legal Action** (`/remediate/4`) — links to the report's
+4. **Dispute** (`/remediate/4`) — an inline count of disputes logged and
+   still open for the latest report, then on to the report's own
    dispute-generation tools (see [§ Statutory dispute
    tools](#statutory-dispute-tools) below) and the [statutory contact
    registry](#regulatory-toolkit--escalation-hub) at `/registry`.
-5. **Enhancement Suite** (`/remediate/5`) — links to `/enhancement-suite`,
-   9 self-contained client-side tools: a Notice of Correction word-count
-   scratchpad, a credit-utilisation simulator, a mortgage-readiness
-   checklist, a search-impact (12-month drop-off) countdown, a CCJ/default
-   cost-of-waiting estimator, a debt payoff calculator (snowball vs.
-   avalanche, simulated month-by-month from the report's own active
-   balances), a mortgage/loan affordability estimate (a debt-to-income
-   illustration against a handful of illustrative income multiples), a
-   dispute-lifecycle checklist, and a next-best-action summary pulled from
-   the report's own already-computed `suggestedActions`. Every calculator
-   on this page is explicitly labelled as illustrative/educational, never
-   financial or legal advice.
+5. **Track & grow** (`/remediate/5`) — an inline count of open and
+   past-deadline disputes, a link into the report's own dispute tracker,
+   and a pointer to the Enhancement Suite's 9 self-contained client-side
+   tools: a Notice of Correction word-count scratchpad, a credit-
+   utilisation simulator, a mortgage-readiness checklist, a search-impact
+   (12-month drop-off) countdown, a CCJ/default cost-of-waiting estimator,
+   a debt payoff calculator (snowball vs. avalanche, simulated month-by-
+   month from the report's own active balances), a mortgage/loan
+   affordability estimate (a debt-to-income illustration against a
+   handful of illustrative income multiples), a dispute-lifecycle
+   checklist, and a next-best-action summary pulled from the report's own
+   already-computed `suggestedActions`. Every calculator on this page is
+   explicitly labelled as illustrative/educational, never financial or
+   legal advice.
+
+Every step also works as its own standalone page — the stepper is a
+guided tour of tools that already function independently, not a form
+wizard that has to be completed in order, so nothing is ever locked
+behind finishing a previous step.
 
 Two more standalone pages: `/registry` (a dedicated directory view of the
 existing bureau/court/ICO/FOS contact data — see

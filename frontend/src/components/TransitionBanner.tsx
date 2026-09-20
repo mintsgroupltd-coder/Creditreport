@@ -1,3 +1,4 @@
+import { ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
 /**
@@ -13,7 +14,7 @@ export function TransitionBanner({ to, label }: { to: string; label: string }) {
       className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 px-4 py-3 text-sm font-medium text-accent hover:border-accent hover:bg-accent/15"
     >
       <span>{label}</span>
-      <span aria-hidden="true">→</span>
+      <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
     </Link>
   );
 }

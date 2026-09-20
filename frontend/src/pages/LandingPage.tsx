@@ -2,6 +2,10 @@ import { Link } from "react-router-dom";
 
 const FEATURES: { title: string; body: string }[] = [
   {
+    title: "A guided, step-by-step flow",
+    body: "Upload → audit → reconcile across bureaus → dispute → track — five steps through the tools below, in order, with a live preview of your own results at each one. Every step also works as its own standalone page if you'd rather jump around.",
+  },
+  {
     title: "Upload a real UK credit report",
     body: "PDF or CSV, from Experian, Equifax or TransUnion. Every account is parsed into a structured breakdown — balances, limits, defaults, arrears, searches, court records — not just a wall of extracted text.",
   },

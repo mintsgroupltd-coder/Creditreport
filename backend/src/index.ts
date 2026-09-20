@@ -17,6 +17,19 @@ const app = express();
 app.use(cors({ origin: env.corsOrigin }));
 app.use(express.json());
 
+// This is a JSON API with no UI of its own — the actual app lives on the
+// frontend's URL. A bare "Cannot GET /" here would look broken to anyone
+// who lands on this URL directly (e.g. checking the API is up), so "/"
+// gives a short, honest pointer instead of a 404.
+app.get("/", (_req, res) =>
+  res.json({
+    name: "Credit Report Analyzer API",
+    status: "ok",
+    message: "This is the backend API — the app itself is at the frontend URL.",
+    health: "/health",
+  })
+);
+
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.use("/api/auth", authRouter);
