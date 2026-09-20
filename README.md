@@ -30,10 +30,13 @@ This is a working scaffold, not a hardened production system. Specifically:
   features, and none were validated against a real sample containing
   them). Its one fully-honest gap is court judgments (CCJs): the real
   sample had none on it, so Equifax's actual judgment-table layout has
-  never been seen — if a report's Court and other public records
-  section isn't entirely empty, the parser falls back to the same
-  conservative keyword scan the generic parser uses and surfaces a
-  warning, rather than guessing a table structure.
+  never been seen. The parser now recognises an inferred Label/Value
+  table for this section (keyed off Equifax's own documented CCJ/
+  Administration Order/Bankruptcy/IVA category names) rather than only
+  a keyword scan, but that inferred structure is itself unconfirmed —
+  it still surfaces a warning even when it parses cleanly, and anything
+  that doesn't match falls all the way back to the same conservative
+  keyword scan the generic parser uses.
 - **TransUnion is still best-effort.** Its report layout wasn't
   available to build and test a dedicated parser against, so it falls
   back to a generic keyword/pattern scanner (`genericFallbackParser.ts`).
@@ -59,7 +62,8 @@ This is a working scaffold, not a hardened production system. Specifically:
   every agreement type's block header, the plain-English Status
   classification (including "Inactive" and "N payments in arrears"),
   payment-history grid expansion and its top/bottom-row alignment
-  logic, hard/soft search parsing, and the court-records fallback path;
+  logic, hard/soft search parsing, and both the inferred structured
+  court-record table and its fallback to the keyword scan;
   `src/services/analytics/disputeTextGenerator.test.ts` covers the
   formal notice-of-correction letter (correct statutory citations, ICO
   not FOS, never "legally binding", the statement quoted verbatim
@@ -618,14 +622,21 @@ What it covers:
   `extractPaymentHistory()`.
 - **Hard and soft searches** (section 7), including rows where the
   consumer's own DOB prints as `N/A` instead of a date.
-- **A conservative fallback for court records** (section 5): the real
-  sample this was built from has no CCJs on it (all three "Public
-  Records at …" subsections read "No data present"), so Equifax's
-  actual judgment-table layout has never been seen. The parser trusts
-  the "no data" case with confidence; if a report's court-records
-  section isn't entirely empty, it falls back to the same keyword scan
-  `genericFallbackParser.ts` uses and attaches a warning, rather than
-  inventing a table structure that hasn't been validated.
+- **Court records (section 5), with an inferred-but-unconfirmed
+  structured path.** The real sample this was built from has no CCJs
+  on it (all three "Public Records at …" subsections read "No data
+  present"), so Equifax's actual judgment-table layout has never been
+  seen. The parser trusts the "no data" case with full confidence. For
+  a non-empty section, it first looks for the same bordered Label/Value
+  table shape used by every other block on this report, keyed off the
+  category headings Equifax documents for this section (County Court
+  Judgment, Administration Order, Bankruptcy, Individual Voluntary
+  Arrangement, and their Scottish equivalents Decree/Trust Deed) —
+  see `parseCourtRecordBlock()`. That table has never actually been
+  seen on a real report either, so even a clean structured parse still
+  attaches a warning saying so; anything that doesn't match this shape
+  at all falls back further, to the same keyword scan
+  `genericFallbackParser.ts` uses, with its own warning.
 
 What it deliberately doesn't parse yet: electoral register (section
 3), gone-away records (section 9), and CIFAS (section 10) — none of

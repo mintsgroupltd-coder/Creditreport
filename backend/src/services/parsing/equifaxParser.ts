@@ -385,12 +385,110 @@ function scanForCourtEvents(sectionText: string): ParsedEvent[] {
 }
 
 /**
- * The real sample this parser was built from has no court judgments on it
- * (all three "Public Records at ..." subsections read "No data present"),
- * so Equifax's real judgment-table layout has never been seen. Rather than
- * guess a structure, this only recognises the "no data" case with
+ * The public-record categories Equifax documents as the only things this
+ * section can contain: County Court Judgments (Decrees in Scotland),
+ * Administration Orders, Bankruptcies, and Individual Voluntary
+ * Arrangements (Trust Deeds in Scotland). The real sample this parser was
+ * built from has none of these on it (all three "Public Records at ..."
+ * subsections read "No data present"), so this exact table has never been
+ * seen — but every other agreement/account block on this same real report
+ * uses one consistent shape (a heading line, then bordered "Label Value"
+ * rows glued with no separator), and there's no reason to expect this
+ * section's own tables to break from that. This recognises that same
+ * shape for a category heading; anything it can't confidently parse this
+ * way falls through to the conservative keyword scan below.
+ */
+const COURT_RECORD_HEADER = /^(County Court Judgment|High Court Judgment|Decree|Administration Order|Bankruptcy|Individual Voluntary Arrangement|Trust Deed)$/i;
+
+const COURT_DATE_LABELS = ["Judgment Date", "Decree Date", "Date Registered", "Satisfied Date"];
+const COURT_MONEY_LABELS = ["Judgment Amount", "Decree Amount"];
+const COURT_TEXT_LABELS = ["Court Name", "Case Number", "Status", "Registered Name", "Registered Address"];
+const COURT_LABELS = [...COURT_DATE_LABELS, ...COURT_MONEY_LABELS, ...COURT_TEXT_LABELS];
+
+/** Same glued-LabelValue extraction as extractLabels, over the court-record label set. */
+function extractCourtLabels(blockText: string): Record<string, string> {
+  const found: Record<string, string> = {};
+  const alternation = COURT_LABELS.map(escapeRegExp).join("|");
+
+  for (const label of COURT_LABELS) {
+    const escaped = escapeRegExp(label);
+    let re: RegExp;
+    if (COURT_DATE_LABELS.includes(label)) {
+      re = new RegExp(`${escaped}(\\d{2}\\/\\d{2}\\/\\d{4})`);
+    } else if (COURT_MONEY_LABELS.includes(label)) {
+      re = new RegExp(`${escaped}(£-?[\\d,]+(?:\\.\\d+)?|N\\/A)`);
+    } else {
+      re = new RegExp(`${escaped}([\\s\\S]*?)(?=(?:${alternation})|$)`);
+    }
+    const m = blockText.match(re);
+    if (m && m[1] && m[1].trim()) found[label] = m[1].trim();
+  }
+  return found;
+}
+
+// Each "Public Records at ..." subsection heading closes off whatever
+// judgment/order block came before it — without this, the last Label/Value
+// field of the final block in a subsection (usually "Status") would run
+// past the block's real end and swallow the next subsection's heading and
+// "No data present" boilerplate along with it.
+const PUBLIC_RECORDS_SUBHEADING = /^Public Records at /i;
+
+function splitCourtRecordBlocks(sectionText: string): string[][] {
+  const lines = toCleanLines(sectionText);
+  const blocks: string[][] = [];
+  let current: string[] | null = null;
+
+  for (const line of lines) {
+    if (COURT_RECORD_HEADER.test(line.trim())) {
+      if (current) blocks.push(current);
+      current = [line.trim()];
+      continue;
+    }
+    if (PUBLIC_RECORDS_SUBHEADING.test(line.trim())) {
+      if (current) blocks.push(current);
+      current = null;
+      continue;
+    }
+    if (current) current.push(line);
+  }
+  if (current) blocks.push(current);
+  return blocks;
+}
+
+function parseCourtRecordBlock(block: string[], warnings: string[]): ParsedEvent | null {
+  const category = block[0];
+  const blockText = block.join(" ");
+  const labels = extractCourtLabels(blockText);
+
+  const date = labels["Judgment Date"] ?? labels["Decree Date"] ?? labels["Date Registered"];
+  if (!date) {
+    warnings.push(`A "${category}" entry in section 5 was recognised by heading, but its date field didn't match the expected layout — reviewed with the generic scanner instead.`);
+    return null;
+  }
+
+  return {
+    type: "CCJ",
+    date: ukDateToIso(date) ?? new Date().toISOString().slice(0, 10),
+    amount: parseMoney(labels["Judgment Amount"] ?? labels["Decree Amount"]),
+    detail: {
+      category,
+      courtName: labels["Court Name"],
+      caseNumber: labels["Case Number"],
+      status: labels["Status"],
+      satisfiedDate: ukDateToIso(labels["Satisfied Date"]),
+      registeredName: labels["Registered Name"],
+      registeredAddress: labels["Registered Address"],
+    },
+  };
+}
+
+/**
+ * Rather than guess a structure with nothing to go on, this only recognises
+ * the "no data" case and the inferred Label/Value table with full
  * confidence; anything else falls back to the same conservative keyword
  * scan the generic parser uses, with a warning so it gets reviewed by eye.
+ * Even a successful structured parse still warns, since the table shape
+ * itself remains unconfirmed against a real populated section.
  */
 function parseCourtRecordsSection(sectionText: string, warnings: string[]): ParsedEvent[] {
   // Counts only the "No data present" heading lines themselves — a plain
@@ -399,6 +497,15 @@ function parseCourtRecordsSection(sectionText: string, warnings: string[]): Pars
   // ("There is no data present in this section...").
   const noDataCount = toCleanLines(sectionText).filter((l) => /^No data present$/i.test(l)).length;
   if (noDataCount >= 3) return [];
+
+  const blocks = splitCourtRecordBlocks(sectionText);
+  const events = blocks.map((b) => parseCourtRecordBlock(b, warnings)).filter((e): e is ParsedEvent => e !== null);
+  if (events.length > 0) {
+    warnings.push(
+      "Section 5 (Court and other public records) contains one or more structured judgment/order entries. This table layout has never been confirmed against a real Equifax report (the sample this parser was built from had none) — it was inferred from the bordered Label/Value table style used everywhere else in this report, so double-check these entries by eye."
+    );
+    return events;
+  }
 
   warnings.push(
     "Section 5 (Court and other public records) doesn't read as entirely empty, but Equifax's judgment-table layout hasn't been validated against a real sample yet — these entries were read with the generic scanner and should be checked carefully."

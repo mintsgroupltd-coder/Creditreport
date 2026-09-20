@@ -343,3 +343,59 @@ describe("parseEquifaxReport on an unrecognisable document", () => {
     expect(report.warnings.some((w) => w.includes("No credit accounts"))).toBe(true);
   });
 });
+
+/**
+ * A second, minimal fixture isolating section 5, laid out with the same
+ * glued Label/Value table shape used everywhere else on a real Equifax
+ * report — this structural table has never actually been seen on a real
+ * sample (see equifaxParser.ts's comment), so this exercises the inferred
+ * path rather than a confirmed one, and the parser is expected to keep
+ * warning about it even on a clean parse.
+ */
+const COURT_TABLE_FIXTURE = `
+Mr. Casey Okonkwo - Equifax Credit Report - 15/01/2026
+1    of     2
+Consumer Protected
+4. Credit Agreements
+Open Credit Agreements
+
+5. Court and other public records
+Public Records at Current Address
+No data present
+There is no data present in this section.
+Public Records at Previous Addresses
+County Court Judgment
+Court NameDERBY COUNTY COURT
+Case NumberD12345678
+Judgment Date04/03/2023
+Judgment Amount£750
+Satisfied DateN/A
+StatusUnsatisfied
+Public Records at Linked Addresses
+No data present
+There is no data present in this section.
+
+6. Notice of Correction
+No data present
+`;
+
+describe("parseEquifaxReport's inferred structured court-record table", () => {
+  const report = parseEquifaxReport(COURT_TABLE_FIXTURE);
+
+  it("extracts a structured CCJ entry by its Label/Value fields rather than a keyword scan", () => {
+    const ccj = report.events.find((e) => e.type === "CCJ");
+    expect(ccj).toBeDefined();
+    expect(ccj?.date).toBe("2023-03-04");
+    expect(ccj?.amount).toBe(750);
+    const detail = ccj?.detail as Record<string, unknown>;
+    expect(detail.category).toBe("County Court Judgment");
+    expect(detail.courtName).toBe("DERBY COUNTY COURT");
+    expect(detail.caseNumber).toBe("D12345678");
+    expect(detail.status).toBe("Unsatisfied");
+    expect(detail.satisfiedDate).toBeUndefined();
+  });
+
+  it("still warns that the structured table layout is unconfirmed, even on a clean parse", () => {
+    expect(report.warnings.some((w) => w.includes("Section 5") && w.includes("never been confirmed"))).toBe(true);
+  });
+});
