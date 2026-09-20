@@ -83,6 +83,16 @@ export interface IdentityCheck {
   message: string;
 }
 
+/** Illustrative only — this app's own estimate, never a real bureau score.
+ * See backend/src/services/analytics/creditScoreEstimate.ts's doc comment. */
+export interface CreditScoreEstimate {
+  bureau: Bureau;
+  score: number;
+  maxScore: number;
+  band: string;
+  factors: { label: string; impact: number }[];
+}
+
 export interface ReportDetail {
   report: {
     id: string;
@@ -103,6 +113,7 @@ export interface ReportDetail {
     defaultAccounts: number;
   };
   negativeMarkers: NegativeMarkers;
+  creditScoreEstimate: CreditScoreEstimate;
   accounts: AccountRow[];
   events: { id: string; type: string; date: string; amount: string | null; detail: Record<string, unknown> }[];
   alerts: AlertRow[];
@@ -233,6 +244,15 @@ export interface ReconciliationCell {
   status: AccountStatus;
   currentBalance: number | null;
   defaultDate: string | null;
+  /** As reported by this bureau — absent for account types that don't
+   * have a limit (loans, current accounts) or when the parser didn't
+   * capture one. Matches backend/src/services/analytics/reconciliation.ts. */
+  totalCreditLimit: number | null;
+  /** currentBalance / totalCreditLimit for this bureau's own cell, computed
+   * only when both figures are known and the limit is greater than zero —
+   * null otherwise, never assumed to be 0. Purely derived from this
+   * report's own numbers, not a bureau-published figure. */
+  debtToLimitRatio: number | null;
 }
 
 export interface ReconciliationRow {
@@ -246,6 +266,49 @@ export interface ReconciliationRow {
 export type ReconciliationResponse =
   | { eligible: false; bureausIncluded: ReconciliationBureauInfo[]; message: string }
   | { eligible: true; bureausIncluded: ReconciliationBureauInfo[]; rows: ReconciliationRow[]; discrepancyCount: number };
+
+/**
+ * "Equifax credit check portal" SIMULATION types — matches
+ * backend/src/controllers/simulation.controller.ts exactly. This app has
+ * NO real integration with Equifax or any credit reference agency's live
+ * systems; `simulated` and `disclaimer` are present on every response on
+ * purpose and must always be shown, never hidden as a footnote.
+ */
+export interface SimulatedVerifyIdentityResponse {
+  simulated: true;
+  disclaimer: string;
+  verificationId: string;
+  status: string;
+}
+
+export interface SimulatedTokenResponse {
+  simulated: true;
+  disclaimer: string;
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
+export interface SimulatedScore {
+  value: number;
+  band: string;
+  maxValue: number;
+  basis: string;
+}
+
+export interface SimulatedAccount {
+  lenderName: string;
+  accountType: string;
+  status: string;
+  balance: number;
+}
+
+export interface SimulatedCreditFileResponse {
+  simulated: true;
+  disclaimer: string;
+  score: SimulatedScore;
+  accounts: SimulatedAccount[];
+}
 
 export interface ReportComparison {
   hasPrevious: boolean;

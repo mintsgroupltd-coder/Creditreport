@@ -1,7 +1,14 @@
 import { Response } from "express";
 import { prisma } from "../config/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
-import { buildReconciliation, ReconciliationBureau, ReconciliationReportInput, RECONCILIATION_BUREAUS } from "../services/analytics/reconciliation";
+import { HttpError } from "../middleware/errorHandler";
+import {
+  buildReconciliation,
+  reconciliationToCsv,
+  ReconciliationBureau,
+  ReconciliationReportInput,
+  RECONCILIATION_BUREAUS,
+} from "../services/analytics/reconciliation";
 
 /**
  * Cross-references the user's own reports across bureaus (see
@@ -14,9 +21,7 @@ import { buildReconciliation, ReconciliationBureau, ReconciliationReportInput, R
  * used, so re-uploading after a dispute naturally supersedes the old
  * comparison.
  */
-export async function getReconciliation(req: AuthenticatedRequest, res: Response) {
-  const userId = req.user!.id;
-
+async function loadReconciliationInput(userId: string): Promise<ReconciliationReportInput[]> {
   const candidateReports = await prisma.report.findMany({
     where: { userId, isSample: false, bureau: { in: [...RECONCILIATION_BUREAUS] } },
     orderBy: { uploadedAt: "desc" },
@@ -29,7 +34,7 @@ export async function getReconciliation(req: AuthenticatedRequest, res: Response
     if (!latestByBureau.has(bureau)) latestByBureau.set(bureau, r);
   }
 
-  const input: ReconciliationReportInput[] = Array.from(latestByBureau.entries()).map(([bureau, r]) => ({
+  return Array.from(latestByBureau.entries()).map(([bureau, r]) => ({
     bureau,
     reportId: r.id,
     uploadedAt: r.uploadedAt.toISOString(),
@@ -43,8 +48,31 @@ export async function getReconciliation(req: AuthenticatedRequest, res: Response
       status: a.status,
       currentBalance: a.currentBalance != null ? Number(a.currentBalance) : a.defaultBalance != null ? Number(a.defaultBalance) : null,
       defaultDate: a.defaultDate ? a.defaultDate.toISOString().slice(0, 10) : null,
+      totalCreditLimit: a.creditLimit != null ? Number(a.creditLimit) : null,
     })),
   }));
+}
 
+export async function getReconciliation(req: AuthenticatedRequest, res: Response) {
+  const input = await loadReconciliationInput(req.user!.id);
   res.json(buildReconciliation(input));
+}
+
+/**
+ * Same comparison as `getReconciliation`, exported as a CSV download
+ * instead of JSON. Refuses (400) rather than exporting an empty/meaningless
+ * file when fewer than two bureaus' worth of real reports are available —
+ * see `reconciliationToCsv`'s own doc comment.
+ */
+export async function getReconciliationCsv(req: AuthenticatedRequest, res: Response) {
+  const input = await loadReconciliationInput(req.user!.id);
+  const result = buildReconciliation(input);
+  if (!result.eligible) {
+    throw new HttpError(400, result.message);
+  }
+
+  const csv = reconciliationToCsv(result);
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", 'attachment; filename="reconciliation.csv"');
+  res.send(csv);
 }

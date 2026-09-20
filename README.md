@@ -1,14 +1,23 @@
-# Credit Report Analyzer
+# Credit Report Analyzer — UK Credit Report Auditor & Statutory Dispute Engine
 
 A full-stack app for uploading a UK credit report (PDF or CSV — Experian,
 Equifax, or TransUnion) and getting back a structured breakdown of every
-account, an automatic negative-marker and identity-anomaly scan, a
-plain-English risk summary, and ready-to-send dispute text.
+account, an automatic negative-marker and identity-anomaly scan (including
+mixed-file/cross-contamination signals like DOB or name mismatches between
+accounts), a plain-English risk summary, an illustrative per-bureau score
+estimate, and ready-to-send statutory dispute text and PDFs. A guided
+5-step workflow (`/remediate/1`–`/remediate/5`) walks a user from upload
+through forensic audit, tri-bureau reconciliation, statutory dispute
+generation, and a self-serve enhancement-suite of credit-rebuilding tools
+— each step reusing the same underlying pages/endpoints described below
+rather than duplicating them.
 
 This README covers the project structure, the key backend routes and
 data model, the key frontend components, and — in the most detail —
 how the parsing and analytics engines actually work, since that's the
-part worth understanding before you extend it.
+part worth understanding before you extend it. [§ Guided workflow &
+feature map](#guided-workflow--feature-map) is the place to start if
+you're trying to match a feature request against what's actually built.
 
 ## Status and scope
 
@@ -114,6 +123,78 @@ This is a working scaffold, not a hardened production system. Specifically:
   script) rather than through committed migration files — run
   `npx prisma migrate dev` yourself once you have unrestricted network
   access, to get real migration files under version control.
+
+## Guided workflow & feature map
+
+A persistent stepper (`frontend/src/components/RemediationStepper.tsx`,
+hosted at `/remediate/:step`) walks a user through 5 stages, each one
+reusing an existing page/endpoint rather than duplicating its logic:
+
+1. **Ingest & Connect** (`/remediate/1`) — upload a PDF/CSV via the shared
+   `ReportUploadForm`, or open one of the three seeded sample reports
+   (mixed-file case study, clean prime profile, adverse defaults profile
+   — see `backend/prisma/seed.ts`) from the dashboard.
+2. **Forensic Quality Audit** (`/remediate/2`) — links to the uploaded
+   report's own detail page, which surfaces the anomaly/mixed-file alerts
+   (`services/analytics/anomalyDetection.ts`) and an illustrative
+   per-bureau score estimate on that report's own bureau scale (Experian
+   /999, Equifax /1000, TransUnion /710 — see
+   `services/analytics/creditScoreEstimate.ts`; **this is this app's own
+   transparent estimate, never a real bureau score** — see that file's
+   doc comment for exactly why one can't be reproduced).
+3. **Multi-Bureau Reconciliation** (`/remediate/3`) — links to
+   `/reconciliation`, which now also computes a debt-to-credit-limit ratio
+   per cell where both figures are known, and offers a CSV export
+   (`GET /api/reconciliation/export.csv`) and a print-friendly view for
+   handing a summary to a broker or adviser.
+4. **Statutory Legal Action** (`/remediate/4`) — links to the report's
+   dispute-generation tools (see [§ Statutory dispute
+   tools](#statutory-dispute-tools) below) and the [statutory contact
+   registry](#regulatory-toolkit--escalation-hub) at `/registry`.
+5. **Enhancement Suite** (`/remediate/5`) — links to `/enhancement-suite`,
+   7 self-contained client-side tools: a Notice of Correction word-count
+   scratchpad, a credit-utilisation simulator, a mortgage-readiness
+   checklist, a search-impact (12-month drop-off) countdown, a CCJ/default
+   cost-of-waiting estimator, a dispute-lifecycle checklist, and a
+   next-best-action summary pulled from the report's own already-computed
+   `suggestedActions`. Every calculator on this page is explicitly labelled
+   as illustrative/educational, never financial or legal advice.
+
+Two more standalone pages: `/registry` (a dedicated directory view of the
+existing bureau/court/ICO/FOS contact data — see
+[§ Regulatory toolkit](#regulatory-toolkit--escalation-hub)) and
+`/api-docs` (an accurate, auto-derived-from-the-routes reference of the
+real REST API surface, including an honest architecture note — this app's
+report/account/alert data **is** persisted server-side in PostgreSQL via
+Prisma; nothing about this app runs "client-side only" or avoids the
+server, and no page claims otherwise).
+
+**A deliberately fake "Equifax gateway" simulation** lives at
+`/equifax-gateway` and `POST /api/simulation/equifax/*` — a 3-step
+identity-verification → OAuth2-token → credit-file wizard illustrating
+what connecting to a live bureau API might look like. This app has **no
+real integration with Equifax or any credit reference agency**. Every
+response from every endpoint under `/api/simulation` carries
+`simulated: true` and a `disclaimer` field by design (see
+`backend/src/controllers/simulation.controller.ts`'s top-of-file comment
+for the two rules future changes must not relax), and the frontend page
+renders a persistent, sticky "SIMULATED DEMO" banner on every step rather
+than a buried footnote. This exists because a screen that convincingly
+imitates a real, regulated financial institution's identity-verification
+flow — with no indication it's fake — would be a look-alike of that
+institution's real product, which this app won't ship undisclosed even as
+an internal demo.
+
+**One thing this app deliberately does NOT do**, even though it was
+asked for: reproduce an official Post Office/Royal Mail proof-of-posting
+certificate (stamp box, barcode graphic, "Post Office®" styling) for the
+postage-record PDF. `services/pdf/trackingSheetPdf.ts` now records which
+real Royal Mail service was used (a fixed picklist — Special Delivery
+Guaranteed / Signed For 1st Class / Standard 1st Class / Other — see
+`POSTAL_SERVICES`) and puts the statutory milestone tracker on its own
+second page, but it stays an honest, unbranded "your own notes" sheet,
+never a fabricated replica of a real organisation's official document —
+see that file's doc comment.
 
 ## Project structure
 
@@ -819,3 +900,25 @@ run once at upload time (`reportPersistence.ts`) and persisted as
   access to lock in a real migration history (and swap `db push` back
   out of `backend/package.json`'s `start` script for `prisma migrate
   deploy` once you do).
+- **Add direct email dispatch of dispute letters**: the dispute flow
+  generates letter text/PDFs and lets the user download and send them
+  themselves, but there's no "send this letter by email" button that
+  actually dispatches it from the app (nodemailer is already a
+  dependency, used today only for the password-reset flow — see
+  `auth.controller.ts` — so wiring a real send would reuse that same
+  transport). Deliberately not built without the user seeing this
+  called out first, since auto-sending a legal notice on someone's
+  behalf is a bigger trust step than generating one for them to review.
+- **Add one-click "dispute this" links from the reconciliation table**:
+  `/reconciliation` flags which accounts differ by bureau but doesn't
+  yet deep-link a flagged row straight into that account's report page
+  with a dispute template pre-selected — worth adding once there's a
+  reliable way to map a reconciliation row's `accountId` (per bureau) to
+  the right report + template combination.
+- **`ComparisonPanel.tsx` vs. the reconciliation table**: these are two
+  different comparisons — `ComparisonPanel` shows one report's own stats
+  over time (this upload vs. your previous one), while the new
+  debt-to-limit/CSV-export/print work landed on `/reconciliation`'s
+  cross-bureau table instead, since that's what actually has per-bureau
+  `ReconciliationCell`s to compute a ratio from. Don't conflate the two
+  when extending either.

@@ -8,7 +8,7 @@ import { buildDisputeLetterInput, buildDisputeSchedule, loadOwnedReport } from "
 import { buildDisputeLetterParts, DisputeTemplateId } from "../services/analytics/disputeTextGenerator";
 import { checkProfileIdentityMatch } from "../services/analytics/identityCheck";
 import { renderEscalationPackPdf } from "../services/pdf/escalationPackPdf";
-import { renderTrackingSheetPdf, TrackingMilestone } from "../services/pdf/trackingSheetPdf";
+import { renderTrackingSheetPdf, TrackingMilestone, POSTAL_SERVICES } from "../services/pdf/trackingSheetPdf";
 
 /** How long to wait before following up, and whether that's a real legal
  * deadline or just a sensible nudge:
@@ -244,6 +244,13 @@ export async function getEscalationPackPdf(req: AuthenticatedRequest, res: Respo
   doc.end();
 }
 
+const trackingSheetQuerySchema = z.object({
+  // A fixed set of real Royal Mail services rather than free text — see
+  // POSTAL_SERVICES's own doc comment in trackingSheetPdf.ts for why.
+  service: z.enum(POSTAL_SERVICES).optional(),
+  cost: z.string().max(30).optional(),
+});
+
 export async function getTrackingSheetPdf(req: AuthenticatedRequest, res: Response) {
   const dispute = await prisma.disputeRecord.findFirst({
     where: { id: req.params.id, userId: req.user!.id },
@@ -251,8 +258,7 @@ export async function getTrackingSheetPdf(req: AuthenticatedRequest, res: Respon
   });
   if (!dispute) throw new HttpError(404, "Dispute record not found");
 
-  const service = typeof req.query.service === "string" ? req.query.service : undefined;
-  const cost = typeof req.query.cost === "string" ? req.query.cost : undefined;
+  const { service, cost } = trackingSheetQuerySchema.parse(req.query);
 
   const doc = renderTrackingSheetPdf({
     recipient: dispute.recipient,

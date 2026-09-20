@@ -337,6 +337,35 @@ export function ReportDetailPage() {
       </div>
 
       <section className="mt-6 rounded-lg border border-border bg-panel p-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            {data.creditScoreEstimate.bureau} scale estimate
+          </h2>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-warn">Illustrative, not a real score</span>
+        </div>
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="text-3xl font-semibold text-slate-100">{data.creditScoreEstimate.score}</span>
+          <span className="text-sm text-slate-500">/ {data.creditScoreEstimate.maxScore}</span>
+          <span className="ml-2 text-sm font-medium text-slate-300">{data.creditScoreEstimate.band}</span>
+        </div>
+        <p className="mt-2 text-xs text-slate-500">
+          This app's own transparent estimate from the negative markers below — not Experian/Equifax/TransUnion's real, proprietary
+          score, which depends on data this app doesn't have.
+        </p>
+        <ul className="mt-3 flex flex-col gap-1 text-xs text-slate-400">
+          {data.creditScoreEstimate.factors.map((f, i) => (
+            <li key={i} className="flex justify-between gap-3">
+              <span>{f.label}</span>
+              <span className={`tabular-nums ${f.impact < 0 ? "text-critical" : "text-slate-400"}`}>
+                {f.impact > 0 ? "+" : ""}
+                {f.impact}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="mt-6 rounded-lg border border-border bg-panel p-5">
         <h2 className="text-sm font-semibold text-slate-100">What this means, and what to do next</h2>
         <p className="mt-2 text-sm text-slate-300">{data.insights.summary}</p>
         {data.insights.suggestedActions.length > 0 && (

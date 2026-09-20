@@ -9,6 +9,7 @@ import { disputesRouter } from "./routes/disputes.routes";
 import { profileRouter } from "./routes/profile.routes";
 import { reconciliationRouter } from "./routes/reconciliation.routes";
 import { reportsRouter } from "./routes/reports.routes";
+import { simulationRouter } from "./routes/simulation.routes";
 
 const app = express();
 
@@ -24,6 +25,11 @@ app.use("/api/contacts", contactsRouter);
 app.use("/api/profile", profileRouter);
 app.use("/api/disputes", disputesRouter);
 app.use("/api/reconciliation", reconciliationRouter);
+// Clearly-labeled Equifax gateway SIMULATION only — see
+// simulation.controller.ts's top-of-file comment. Every response from
+// this router carries simulated:true and a disclaimer; nothing here is a
+// real connection to Equifax or any credit reference agency.
+app.use("/api/simulation", simulationRouter);
 
 app.use(errorHandler);
 

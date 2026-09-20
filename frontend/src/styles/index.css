@@ -5,3 +5,15 @@
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
+
+/* Printing a page (e.g. the reconciliation summary) should show the
+ * page's own content only, not the app's header/nav chrome. Targets the
+ * single <header> AppShell renders, so no app-chrome component needs
+ * editing to get a clean printed page. Elements within a page that
+ * shouldn't print (buttons, etc.) use Tailwind's built-in `print:hidden`
+ * utility instead. */
+@media print {
+  header {
+    display: none !important;
+  }
+}

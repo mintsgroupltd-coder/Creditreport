@@ -14,6 +14,9 @@ import {
   ReportSummary,
   RiskSummary,
   SignatureMode,
+  SimulatedCreditFileResponse,
+  SimulatedTokenResponse,
+  SimulatedVerifyIdentityResponse,
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
@@ -171,6 +174,23 @@ export const api = {
     return res.blob();
   },
 
+  /** CSV export of the tri-bureau reconciliation table — same eligibility
+   * rule as getReconciliation (needs 2+ real bureau reports), just not
+   * JSON. Not JSON/text, so this bypasses `request()` and returns a Blob
+   * the caller turns into a download via an object URL, same pattern as
+   * downloadDisputePdf/downloadEscalationPackPdf below. */
+  async exportReconciliationCsv(): Promise<Blob> {
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/reconciliation/export.csv`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, body.error ?? "Could not export the reconciliation CSV");
+    }
+    return res.blob();
+  },
+
   /** The bundled ICO/FOS escalation pack for a logged dispute — cover
    * summary, the letter as sent, and the escalation authority's contact
    * details with dated milestones. Only available for the templates
@@ -189,6 +209,29 @@ export const api = {
     }
     return res.blob();
   },
+
+  /** "Equifax credit check portal" SIMULATION — steps 1–3 of the demo
+   * wizard on EquifaxGatewaySimulationPage. This app has no real
+   * connection to Equifax or any credit reference agency's live systems;
+   * every response here always carries `simulated: true` plus a
+   * `disclaimer` string (see backend/src/controllers/simulation.controller.ts). */
+  simulateEquifaxVerifyIdentity: (fullName: string, dateOfBirth: string, addressLine: string) =>
+    request<SimulatedVerifyIdentityResponse>("/simulation/equifax/verify-identity", {
+      method: "POST",
+      body: JSON.stringify({ fullName, dateOfBirth, addressLine }),
+    }),
+
+  simulateEquifaxToken: (verificationId: string) =>
+    request<SimulatedTokenResponse>("/simulation/equifax/token", {
+      method: "POST",
+      body: JSON.stringify({ verificationId }),
+    }),
+
+  simulateEquifaxCreditFile: (accessToken: string, reportId?: string) =>
+    request<SimulatedCreditFileResponse>("/simulation/equifax/credit-file", {
+      method: "POST",
+      body: JSON.stringify({ access_token: accessToken, reportId }),
+    }),
 };
 
 export { ApiError };

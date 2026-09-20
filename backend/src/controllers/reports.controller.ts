@@ -13,6 +13,7 @@ import {
   generateDisputeText,
   listDisputeTemplates,
 } from "../services/analytics/disputeTextGenerator";
+import { CreditScoreBureau, estimateCreditScore } from "../services/analytics/creditScoreEstimate";
 import { checkProfileIdentityMatch } from "../services/analytics/identityCheck";
 import { buildDocumentPins } from "../services/analytics/documentPins";
 import { extractBureauRefs } from "../services/analytics/relatedRefs";
@@ -91,7 +92,7 @@ const SEARCH_WINDOW_DAYS = 365;
 /** Shared by getReport (full detail) and getReportComparison (progress
  * over time) so the two never drift on how a "negative marker" is
  * defined. */
-function computeStatsAndMarkers(report: OwnedReport) {
+export function computeStatsAndMarkers(report: OwnedReport) {
   const activeCount = report.accounts.filter((a: OwnedAccount) => a.status === "ACTIVE").length;
   const closedCount = report.accounts.filter(
     (a: OwnedAccount) => a.status === "SETTLED" || a.status === "SATISFIED" || a.status === "CLOSED"
@@ -168,6 +169,16 @@ export async function getReport(req: AuthenticatedRequest, res: Response) {
     },
     stats,
     negativeMarkers,
+    // Illustrative only — see creditScoreEstimate.ts's doc comment. Falls
+    // back to Equifax's 0-1000 scale for an UNKNOWN-bureau report (e.g. a
+    // generic CSV upload) since there's no bureau-specific scale to use.
+    creditScoreEstimate: estimateCreditScore(report.bureau === "UNKNOWN" ? "EQUIFAX" : (report.bureau as CreditScoreBureau), {
+      totalAccounts: stats.totalAccounts,
+      activeDefaultCount: negativeMarkers.activeDefaultCount,
+      unsatisfiedCcjCount: negativeMarkers.unsatisfiedCcjCount,
+      highUtilisationAccountCount: negativeMarkers.highUtilisationCount,
+      recentSearchCount: negativeMarkers.recentSearchCount,
+    }),
     accounts: report.accounts.map((a: OwnedAccount) => ({
       id: a.id,
       bureauRef: a.bureauRef,

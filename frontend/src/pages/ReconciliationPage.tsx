@@ -18,13 +18,38 @@ function money(value: number | null): string {
   return `£${Math.round(value).toLocaleString("en-GB")}`;
 }
 
+function percent(value: number | null): string {
+  if (value === null) return "—";
+  return `${Math.round(value * 100)}%`;
+}
+
 export function ReconciliationPage() {
   const [data, setData] = useState<ReconciliationResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [downloadingCsv, setDownloadingCsv] = useState(false);
+  const [csvError, setCsvError] = useState<string | null>(null);
 
   useEffect(() => {
     api.getReconciliation().then(setData).catch((err) => setError(err instanceof ApiError ? err.message : "Could not load the reconciliation view."));
   }, []);
+
+  async function handleDownloadCsv() {
+    setDownloadingCsv(true);
+    setCsvError(null);
+    try {
+      const blob = await api.exportReconciliationCsv();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "reconciliation.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setCsvError(err instanceof ApiError ? err.message : "Could not export the CSV.");
+    } finally {
+      setDownloadingCsv(false);
+    }
+  }
 
   if (error) {
     return (
@@ -45,16 +70,36 @@ export function ReconciliationPage() {
 
   return (
     <AppShell>
-      <div>
-        <h1 className="text-xl font-semibold text-slate-100">Tri-bureau reconciliation</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Compares your most recently uploaded real report from each bureau, side by side, to flag anything reported inconsistently
-          between them.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-100">Tri-bureau reconciliation</h1>
+          <p className="mt-1 text-sm text-slate-400">
+            Compares your most recently uploaded real report from each bureau, side by side, to flag anything reported inconsistently
+            between them.
+          </p>
+        </div>
+        {data.eligible && (
+          <div className="flex shrink-0 gap-2 print:hidden">
+            <button
+              onClick={handleDownloadCsv}
+              disabled={downloadingCsv}
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-slate-300 hover:border-accent hover:text-accent disabled:opacity-60"
+            >
+              {downloadingCsv ? "Preparing…" : "Download CSV"}
+            </button>
+            <button
+              onClick={() => window.print()}
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-slate-300 hover:border-accent hover:text-accent"
+            >
+              Print summary
+            </button>
+          </div>
+        )}
       </div>
+      {csvError && <p className="mt-2 text-xs text-critical print:hidden">{csvError}</p>}
 
       {data.bureausIncluded.length > 0 && (
-        <div className="mt-4 flex flex-wrap gap-3">
+        <div className="mt-4 flex flex-wrap gap-3 print:hidden">
           {data.bureausIncluded.map((b) => (
             <Link
               key={b.bureau}
@@ -81,8 +126,8 @@ export function ReconciliationPage() {
             upload, or removed since, rather than genuinely never reported.
           </p>
 
-          <div className="mt-3 overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[720px] border-collapse text-sm">
+          <div className="mt-3 overflow-x-auto rounded-lg border border-border print:overflow-visible print:border-0">
+            <table className="w-full min-w-[720px] border-collapse text-sm print:min-w-0 print:text-xs">
               <thead>
                 <tr className="border-b border-border bg-panel text-left text-xs uppercase tracking-wide text-slate-400">
                   <th className="px-4 py-3">Lender</th>
@@ -116,9 +161,12 @@ export function ReconciliationPage() {
                       return (
                         <td key={b} className="px-4 py-3 align-top">
                           {cell ? (
-                            <Link to={`/accounts/${cell.accountId}`} className="hover:underline">
+                            <Link to={`/accounts/${cell.accountId}`} className="hover:underline print:pointer-events-none print:text-inherit">
                               <span className={`block font-medium ${STATUS_STYLE[cell.status] ?? "text-slate-300"}`}>{cell.status}</span>
                               <span className="text-xs text-slate-400">{money(cell.currentBalance)}</span>
+                              {cell.debtToLimitRatio !== null && (
+                                <span className="block text-xs text-slate-500">{percent(cell.debtToLimitRatio)} of limit</span>
+                              )}
                             </Link>
                           ) : (
                             <span className="text-xs text-slate-500">Not reported</span>

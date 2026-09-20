@@ -11,11 +11,26 @@ export interface TrackingMilestone {
   note: string;
 }
 
+/** The real Royal Mail services a user is actually likely to have used to
+ * post a dispute letter, plus a catch-all — kept as a fixed set (rather
+ * than free text) so this stays a record of which real, named service was
+ * used, not a place to type in something that looks official but isn't.
+ * This is still just this app's own postage-record sheet (see the
+ * function doc comment below) — naming the real service used is not the
+ * same as reproducing Royal Mail's own branding or documents. */
+export const POSTAL_SERVICES = [
+  "Royal Mail Special Delivery Guaranteed",
+  "Royal Mail Signed For 1st Class",
+  "Royal Mail Standard 1st Class",
+  "Other",
+] as const;
+export type PostalService = (typeof POSTAL_SERVICES)[number];
+
 export interface TrackingSheetInput {
   recipient: string;
   templateLabel: string;
   sentDate: string;
-  service?: string;
+  service?: PostalService;
   cost?: string;
   reportLabel?: string;
   milestones: TrackingMilestone[];
@@ -23,13 +38,19 @@ export interface TrackingSheetInput {
 
 /**
  * A plain, unbranded record of postage for one dispute letter — date,
- * service, cost, and a blank box to note the counter reference — plus
- * the statutory/advisory milestone tracker computed from when it was
- * sent. Deliberately generic: no Post Office/Royal Mail names, logos,
- * "proof of posting" certificate styling, or barcode graphics — the app
- * doesn't reproduce an official document, it just gives you a place to
- * keep your own notes (and your real receipt from the counter)
- * alongside the dispute-tracking dates that matter.
+ * which real postal service was used, cost, and a blank box to note the
+ * counter reference — plus the statutory/advisory milestone tracker
+ * (its own, second page) computed from when it was sent.
+ *
+ * `service` is printed as plain text naming whichever real Royal Mail
+ * service the user says they used (see `PostalService` above) — that's
+ * just recording a fact the user supplied, not the same as reproducing
+ * an official document. What this deliberately still doesn't do: no
+ * Post Office/Royal Mail logos, no "proof of posting" certificate
+ * styling, and no barcode graphics — the app never presents this sheet
+ * as an official receipt, only as a place to keep your own notes (and
+ * your real receipt from the counter) alongside the dispute-tracking
+ * dates that matter.
  */
 export function renderTrackingSheetPdf(input: TrackingSheetInput): PDFKit.PDFDocument {
   const doc = new PDFDocument({ margin: 72, size: "A4" });
@@ -91,6 +112,13 @@ export function renderTrackingSheetPdf(input: TrackingSheetInput): PDFKit.PDFDoc
   doc.text("Attach or staple your counter proof-of-posting receipt here.", mm(24), boxY + 6, { width: mm(160) });
   doc.fillColor("black");
   doc.y = boxY + boxHeight + mm(10);
+
+  // The milestone tracker is a distinct second page of this same document
+  // (dated legal/advisory checkpoints, not part of the postage record
+  // above it) rather than whatever happened to fit below the receipt box —
+  // an explicit page break makes that separation clear regardless of how
+  // much space the postage details above took up.
+  doc.addPage();
 
   doc.font("Helvetica-Bold").fontSize(11).text("Milestone tracker", mm(20), doc.y);
   doc.moveDown(0.4);

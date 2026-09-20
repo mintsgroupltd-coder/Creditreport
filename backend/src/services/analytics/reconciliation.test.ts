@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { balancesMateriallyDiffer, buildReconciliation, ReconciliationReportInput } from "./reconciliation";
+import { balancesMateriallyDiffer, buildReconciliation, reconciliationToCsv, ReconciliationReportInput } from "./reconciliation";
 
 function account(overrides: Partial<ReconciliationReportInput["accounts"][number]> = {}): ReconciliationReportInput["accounts"][number] {
   return {
@@ -129,5 +129,90 @@ describe("buildReconciliation", () => {
     expect(result.eligible).toBe(true);
     if (!result.eligible) return;
     expect(result.rows[0].lenderName).toBe("Messy Bank");
+  });
+
+  it("computes a debt-to-limit ratio per cell only when both balance and limit are known", () => {
+    const result = buildReconciliation([
+      {
+        bureau: "EXPERIAN",
+        reportId: "r1",
+        uploadedAt: "2026-01-01",
+        sourceFileName: "e.pdf",
+        accounts: [account({ currentBalance: 250, totalCreditLimit: 1000 })],
+      },
+      {
+        bureau: "EQUIFAX",
+        reportId: "r2",
+        uploadedAt: "2026-01-02",
+        sourceFileName: "q.pdf",
+        accounts: [account({ id: "acc-2", currentBalance: 250 })], // no totalCreditLimit
+      },
+    ]);
+    expect(result.eligible).toBe(true);
+    if (!result.eligible) return;
+    expect(result.rows[0].cells.EXPERIAN?.totalCreditLimit).toBe(1000);
+    expect(result.rows[0].cells.EXPERIAN?.debtToLimitRatio).toBeCloseTo(0.25);
+    expect(result.rows[0].cells.EQUIFAX?.totalCreditLimit).toBeNull();
+    expect(result.rows[0].cells.EQUIFAX?.debtToLimitRatio).toBeNull();
+  });
+
+  it("leaves debtToLimitRatio null when the limit is zero, rather than dividing by zero", () => {
+    const result = buildReconciliation([
+      { bureau: "EXPERIAN", reportId: "r1", uploadedAt: "2026-01-01", sourceFileName: "e.pdf", accounts: [account({ currentBalance: 250, totalCreditLimit: 0 })] },
+      { bureau: "EQUIFAX", reportId: "r2", uploadedAt: "2026-01-02", sourceFileName: "q.pdf", accounts: [account({ id: "acc-2" })] },
+    ]);
+    expect(result.eligible).toBe(true);
+    if (!result.eligible) return;
+    expect(result.rows[0].cells.EXPERIAN?.debtToLimitRatio).toBeNull();
+  });
+});
+
+describe("reconciliationToCsv", () => {
+  it("throws a clear error when the result isn't eligible", () => {
+    const result = buildReconciliation([]);
+    expect(() => reconciliationToCsv(result)).toThrow(/at least two/i);
+  });
+
+  it("produces a header row, a bureau status/balance/ratio triplet per bureau, and a discrepancies column", () => {
+    const result = buildReconciliation([
+      {
+        bureau: "EXPERIAN",
+        reportId: "r1",
+        uploadedAt: "2026-01-01",
+        sourceFileName: "e.pdf",
+        accounts: [account({ status: "DEFAULT", currentBalance: 1000, totalCreditLimit: 2000 })],
+      },
+      { bureau: "EQUIFAX", reportId: "r2", uploadedAt: "2026-01-02", sourceFileName: "q.pdf", accounts: [] },
+    ]);
+    expect(result.eligible).toBe(true);
+    if (!result.eligible) return;
+
+    const csv = reconciliationToCsv(result);
+    const lines = csv.split("\r\n");
+    expect(lines[0]).toBe(
+      "Lender,Account type,EXPERIAN status,EXPERIAN balance (GBP),EXPERIAN debt-to-limit ratio,EQUIFAX status,EQUIFAX balance (GBP),EQUIFAX debt-to-limit ratio,TRANSUNION status,TRANSUNION balance (GBP),TRANSUNION debt-to-limit ratio,Discrepancies"
+    );
+    expect(lines).toHaveLength(2);
+    const fields = lines[1].split(",");
+    expect(fields[0]).toBe("Acme Bank");
+    expect(fields[2]).toBe("DEFAULT"); // EXPERIAN status
+    expect(fields[3]).toBe("1000.00"); // EXPERIAN balance
+    expect(fields[4]).toBe("0.50"); // EXPERIAN debt-to-limit ratio
+    expect(fields[5]).toBe(""); // EQUIFAX status (missing)
+    expect(lines[1]).toContain("not by EQUIFAX"); // discrepancy text present, quoted since it may contain a comma
+  });
+
+  it("quote-escapes a discrepancies field containing a comma", () => {
+    const result = buildReconciliation([
+      { bureau: "EXPERIAN", reportId: "r1", uploadedAt: "2026-01-01", sourceFileName: "e.pdf", accounts: [account({ status: "DEFAULT" })] },
+      { bureau: "EQUIFAX", reportId: "r2", uploadedAt: "2026-01-02", sourceFileName: "q.pdf", accounts: [account({ id: "acc-2", status: "ACTIVE" })] },
+    ]);
+    expect(result.eligible).toBe(true);
+    if (!result.eligible) return;
+
+    const csv = reconciliationToCsv(result);
+    const discrepancyLine = csv.split("\r\n")[1];
+    // "Status differs by bureau: EXPERIAN = DEFAULT, EQUIFAX = ACTIVE." contains a comma, so the field must be quoted.
+    expect(discrepancyLine).toMatch(/"Status differs by bureau: EXPERIAN = DEFAULT, EQUIFAX = ACTIVE\."/);
   });
 });

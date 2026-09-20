@@ -10,6 +10,11 @@ export interface ReconciliationAccountInput {
   status: string;
   currentBalance: number | null;
   defaultDate: string | null;
+  /** Optional total credit limit for this account, as reported by this
+   * bureau. Absent for account types that don't have one (loans, current
+   * accounts) or when the parser didn't capture it. Used only to derive
+   * `ReconciliationCell.debtToLimitRatio` below — never required. */
+  totalCreditLimit?: number | null;
 }
 
 export interface ReconciliationReportInput {
@@ -27,6 +32,15 @@ export interface ReconciliationCell {
   status: string;
   currentBalance: number | null;
   defaultDate: string | null;
+  totalCreditLimit: number | null;
+  /** currentBalance / totalCreditLimit for this bureau's own cell, computed
+   * only when both figures are known and the limit is greater than zero;
+   * null otherwise (never assumed to be 0). This is purely derived from
+   * this report's own numbers — not a bureau-published figure — and is
+   * shown alongside the balance/status columns as a quick per-bureau
+   * utilisation comparison, the same way negativeMarkers.ts's own
+   * per-account utilisation is computed for a single report. */
+  debtToLimitRatio: number | null;
 }
 
 export interface ReconciliationRow {
@@ -104,6 +118,11 @@ export function buildReconciliation(reports: ReconciliationReportInput[]): Recon
       // possible), keep the first one rather than silently overwriting
       // it with the second.
       if (!row.cells[report.bureau]) {
+        const totalCreditLimit = account.totalCreditLimit ?? null;
+        const debtToLimitRatio =
+          account.currentBalance != null && totalCreditLimit != null && totalCreditLimit > 0
+            ? account.currentBalance / totalCreditLimit
+            : null;
         row.cells[report.bureau] = {
           reportId: report.reportId,
           accountId: account.id,
@@ -111,6 +130,8 @@ export function buildReconciliation(reports: ReconciliationReportInput[]): Recon
           status: account.status,
           currentBalance: account.currentBalance,
           defaultDate: account.defaultDate,
+          totalCreditLimit,
+          debtToLimitRatio,
         };
       }
     }
@@ -152,4 +173,55 @@ export function buildReconciliation(reports: ReconciliationReportInput[]): Recon
   );
 
   return { eligible: true, bureausIncluded, rows: sortedRows, discrepancyCount };
+}
+
+/** Quotes a CSV field only when it needs it (contains a comma, quote, or
+ * newline), doubling up any internal quotes per RFC 4126 — a field with
+ * none of those characters is left bare, matching what a spreadsheet
+ * writes for plain text/numbers. */
+function csvField(value: string): string {
+  if (/[",\r\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+/**
+ * Renders a `buildReconciliation` result as a CSV: one row per matched
+ * lender+account-type, with a status/balance/debt-to-limit column triplet
+ * per bureau (always in `RECONCILIATION_BUREAUS` order, blank where that
+ * bureau has no cell for the row) plus a discrepancies column summarising
+ * what `buildReconciliation` already found. Only meaningful once the
+ * comparison itself is eligible (two or more bureaus' reports) — call
+ * sites should check `result.eligible` themselves before exporting, but
+ * this throws a clear error if that check is skipped.
+ */
+export function reconciliationToCsv(result: ReconciliationResult): string {
+  if (!result.eligible) {
+    throw new Error(
+      `Cannot export a reconciliation CSV: ${result.message} (need at least two bureaus' worth of real reports to compare).`
+    );
+  }
+
+  const header = ["Lender", "Account type"];
+  for (const bureau of RECONCILIATION_BUREAUS) {
+    header.push(`${bureau} status`, `${bureau} balance (GBP)`, `${bureau} debt-to-limit ratio`);
+  }
+  header.push("Discrepancies");
+
+  const lines = [header.map(csvField).join(",")];
+
+  for (const row of result.rows) {
+    const fields: string[] = [row.lenderName, row.accountType];
+    for (const bureau of RECONCILIATION_BUREAUS) {
+      const cell = row.cells[bureau];
+      fields.push(cell?.status ?? "");
+      fields.push(cell?.currentBalance != null ? cell.currentBalance.toFixed(2) : "");
+      fields.push(cell?.debtToLimitRatio != null ? cell.debtToLimitRatio.toFixed(2) : "");
+    }
+    fields.push(row.discrepancies.join(" | "));
+    lines.push(fields.map(csvField).join(","));
+  }
+
+  return lines.join("\r\n");
 }

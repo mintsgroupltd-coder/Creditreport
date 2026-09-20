@@ -1,15 +1,14 @@
-import { ChangeEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { ReportSummary } from "../api/types";
 import { AppShell } from "../components/AppShell";
+import { ReportUploadForm } from "../components/ReportUploadForm";
 
 export function DashboardPage() {
   const navigate = useNavigate();
   const [reports, setReports] = useState<ReportSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api
@@ -18,22 +17,6 @@ export function DashboardPage() {
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load your reports."));
   }, []);
 
-  async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setError(null);
-    setUploading(true);
-    try {
-      const result = await api.uploadReport(file);
-      navigate(`/reports/${result.reportId}`);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Upload failed — please try again.");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  }
-
   return (
     <AppShell>
       <div className="flex items-center justify-between">
@@ -41,10 +24,7 @@ export function DashboardPage() {
           <h1 className="text-xl font-semibold text-slate-100">Your reports</h1>
           <p className="mt-1 text-sm text-slate-400">Upload a credit report (PDF or CSV) to parse and analyse it.</p>
         </div>
-        <label className="cursor-pointer rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent/90">
-          {uploading ? "Uploading…" : "Upload report"}
-          <input ref={fileInputRef} type="file" accept=".pdf,.csv" onChange={handleFileChange} disabled={uploading} className="hidden" />
-        </label>
+        <ReportUploadForm onUploaded={(reportId) => navigate(`/reports/${reportId}`)} onError={setError} />
       </div>
 
       {error && <p className="mt-4 text-sm text-critical">{error}</p>}
