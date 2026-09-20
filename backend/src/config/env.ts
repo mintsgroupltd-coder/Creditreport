@@ -30,4 +30,10 @@ export const env = {
     pass: process.env.SMTP_PASS,
     from: process.env.SMTP_FROM ?? "no-reply@credit-report-analyzer.local",
   },
+  // Shared secret an external scheduler (a Render Cron Job, a GitHub
+  // Actions schedule, etc.) presents in an `x-internal-secret` header to
+  // call POST /api/disputes/run-reminders — this endpoint isn't tied to
+  // a logged-in user, so it needs its own gate rather than requireAuth.
+  // Undefined disables the endpoint entirely (see disputes.controller.ts).
+  internalTaskSecret: process.env.INTERNAL_TASK_SECRET,
 };

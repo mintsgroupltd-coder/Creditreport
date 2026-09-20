@@ -7,6 +7,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { EnhancementSuitePage } from "./pages/EnhancementSuitePage";
 import { EquifaxGatewaySimulationPage } from "./pages/EquifaxGatewaySimulationPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
+import { LandingPage } from "./pages/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ReconciliationPage } from "./pages/ReconciliationPage";
 import { RemediationPage } from "./pages/RemediationPage";
@@ -14,6 +15,7 @@ import { ReportDetailPage } from "./pages/ReportDetailPage";
 import { ReportInspectorPage } from "./pages/ReportInspectorPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SharedReportPage } from "./pages/SharedReportPage";
 import { SignupPage } from "./pages/SignupPage";
 import { StatutoryRegistryPage } from "./pages/StatutoryRegistryPage";
 
@@ -23,6 +25,15 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/** "/" is the public marketing landing page for a signed-out visitor, and
+ * the dashboard for a signed-in one — rather than splitting them across
+ * two URLs, so a bookmark or shared link to "/" always does the right
+ * thing for whoever opens it. */
+function HomeRoute() {
+  const { user } = useAuth();
+  return user ? <DashboardPage /> : <LandingPage />;
+}
+
 export function App() {
   return (
     <Routes>
@@ -30,14 +41,10 @@ export function App() {
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
-      <Route
-        path="/"
-        element={
-          <RequireAuth>
-            <DashboardPage />
-          </RequireAuth>
-        }
-      />
+      {/* Public, unauthenticated — a shared report link has no logged-in
+          user, so this must sit outside RequireAuth. */}
+      <Route path="/shared/:token" element={<SharedReportPage />} />
+      <Route path="/" element={<HomeRoute />} />
       <Route
         path="/reports/:id"
         element={

@@ -161,13 +161,23 @@ export function ReconciliationPage() {
                       return (
                         <td key={b} className="px-4 py-3 align-top">
                           {cell ? (
-                            <Link to={`/accounts/${cell.accountId}`} className="hover:underline print:pointer-events-none print:text-inherit">
-                              <span className={`block font-medium ${STATUS_STYLE[cell.status] ?? "text-slate-300"}`}>{cell.status}</span>
-                              <span className="text-xs text-slate-400">{money(cell.currentBalance)}</span>
-                              {cell.debtToLimitRatio !== null && (
-                                <span className="block text-xs text-slate-500">{percent(cell.debtToLimitRatio)} of limit</span>
+                            <>
+                              <Link to={`/accounts/${cell.accountId}`} className="hover:underline print:pointer-events-none print:text-inherit">
+                                <span className={`block font-medium ${STATUS_STYLE[cell.status] ?? "text-slate-300"}`}>{cell.status}</span>
+                                <span className="text-xs text-slate-400">{money(cell.currentBalance)}</span>
+                                {cell.debtToLimitRatio !== null && (
+                                  <span className="block text-xs text-slate-500">{percent(cell.debtToLimitRatio)} of limit</span>
+                                )}
+                              </Link>
+                              {row.discrepancies.length > 0 && (
+                                <Link
+                                  to={`/reports/${cell.reportId}?template=general_accuracy&focusAccountId=${cell.accountId}`}
+                                  className="mt-1.5 inline-block rounded-full border border-critical/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-critical hover:bg-critical/10 print:hidden"
+                                >
+                                  Dispute this
+                                </Link>
                               )}
-                            </Link>
+                            </>
                           ) : (
                             <span className="text-xs text-slate-500">Not reported</span>
                           )}

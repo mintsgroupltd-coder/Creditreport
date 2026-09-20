@@ -95,8 +95,79 @@ model User {
   resetTokenHash      String?   @unique
   resetTokenExpiresAt DateTime?
 
-  reports        Report[]
-  disputeRecords DisputeRecord[]
+  // Two-factor auth (TOTP, RFC 6238) — totpSecret is only meaningful once
+  // totpEnabled is true (a secret can exist mid-enrollment before the
+  // user has confirmed a code, so gate on totpEnabled, not secret
+  // presence). Backup codes are stored as bcrypt hashes, one consumed
+  // (removed from the array) per use — never store them raw.
+  totpSecret           String?
+  totpEnabled          Boolean @default(false)
+  totpBackupCodeHashes Json? // string[] of bcrypt hashes
+
+  // Opt-in periodic "time to re-check your credit file" email — null/0
+  // means off. Set from Settings; lastRecheckReminderAt guards against
+  // re-sending until that many months have passed again.
+  recheckReminderMonths Int?
+  lastRecheckReminderAt DateTime?
+
+  reports         Report[]
+  disputeRecords  DisputeRecord[]
+  sessions        Session[]
+  auditLogEntries AuditLogEntry[]
+}
+
+/// One issued login session, keyed by the JWT's own `jti` claim so a
+/// token can be revoked (log out this device / log out everywhere)
+/// despite JWTs otherwise being stateless — requireAuth checks this
+/// table isn't revoked on every request. `label` is a best-effort,
+/// coarse User-Agent summary ("Chrome on macOS"), never a precise
+/// fingerprint, and purely descriptive — it plays no role in auth.
+model Session {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jti        String    @unique
+  label      String?
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+
+  @@index([userId])
+}
+
+/// A time-limited, revocable link letting someone without an account
+/// (a solicitor, a debt adviser) view one report read-only. Only the
+/// SHA-256 hash of the token is stored, same pattern as the password
+/// reset token, so a database read alone can't be used as the link.
+model ShareLink {
+  id           String    @id @default(cuid())
+  reportId     String
+  report       Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  tokenHash    String    @unique
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  lastViewedAt DateTime?
+  viewCount    Int       @default(0)
+
+  @@index([reportId])
+}
+
+/// A record that something sensitive happened to an account or a
+/// report — viewed, downloaded, shared — surfaced back to the user on
+/// the settings page so they have visibility into their own account's
+/// activity. Deliberately coarse (an action label + optional short
+/// detail), not a full request log.
+model AuditLogEntry {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reportId  String?
+  action    String // e.g. "VIEW_REPORT" | "DOWNLOAD_PDF" | "CREATE_SHARE_LINK" | "SEND_DISPUTE_EMAIL"
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 /// One uploaded/parsed credit report belonging to a user.
@@ -132,6 +203,7 @@ model Report {
   events         Event[]
   alerts         Alert[]
   disputeRecords DisputeRecord[]
+  shareLinks     ShareLink[]
 
   @@index([userId])
 }
@@ -247,6 +319,16 @@ model DisputeRecord {
   status           DisputeStatus @default(SENT)
   resolvedAt       DateTime?
   notes            String?       @db.Text
+
+  // Set only when the user explicitly sends the letter by email from
+  // the app (an in-app action distinct from sentAt, which is when they
+  // logged having sent it by whatever means, usually post) — see
+  // disputes.controller.ts's sendDisputeEmail.
+  emailSentAt DateTime?
+  emailSentTo String?
+  // Set once a "deadline passed, no response" reminder email has gone
+  // out for this dispute, so the scheduled reminder run never repeats it.
+  reminderSentAt DateTime?
 
   @@index([reportId])
   @@index([userId])

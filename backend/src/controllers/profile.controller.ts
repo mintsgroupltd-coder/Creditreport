@@ -11,6 +11,8 @@ const PROFILE_SELECT = {
   dateOfBirth: true,
   electoralRollRegistered: true,
   identityConfirmedAt: true,
+  recheckReminderMonths: true,
+  totpEnabled: true,
 } as const;
 
 type ProfileRow = {
@@ -20,6 +22,8 @@ type ProfileRow = {
   dateOfBirth: Date | null;
   electoralRollRegistered: boolean | null;
   identityConfirmedAt: Date | null;
+  recheckReminderMonths: number | null;
+  totpEnabled: boolean;
 };
 
 /** Shapes the DB row into the API response — `dateOfBirth` as a plain
@@ -34,6 +38,8 @@ function serializeProfile(row: ProfileRow) {
     dateOfBirth: row.dateOfBirth ? row.dateOfBirth.toISOString().slice(0, 10) : null,
     electoralRollRegistered: row.electoralRollRegistered,
     identityConfirmed: row.identityConfirmedAt !== null,
+    recheckReminderMonths: row.recheckReminderMonths,
+    totpEnabled: row.totpEnabled,
   };
 }
 
@@ -95,4 +101,41 @@ export async function updateProfile(req: AuthenticatedRequest, res: Response) {
     select: PROFILE_SELECT,
   });
   res.json(serializeProfile(user));
+}
+
+const updateRecheckReminderSchema = z.object({
+  // 0 is accepted as a synonym for "off" (matches the settings page's
+  // "Off" <select> option), stored as null either way.
+  recheckReminderMonths: z.union([z.literal(1), z.literal(3), z.literal(6), z.literal(12), z.literal(0)]).nullable(),
+});
+
+/** PATCH /api/profile/recheck-reminder — its own tiny endpoint, separate
+ * from updateProfile above, specifically so the settings page's security
+ * section can save this one preference on its own. updateProfile's
+ * schema treats fullName/postalAddress as required-but-nullable on every
+ * call, so a partial PATCH through it would silently wipe out the user's
+ * saved identity fields — this sidesteps that risk entirely rather than
+ * relying on callers to remember to always resend the whole form. */
+export async function updateRecheckReminder(req: AuthenticatedRequest, res: Response) {
+  const { recheckReminderMonths } = updateRecheckReminderSchema.parse(req.body);
+  await prisma.user.update({ where: { id: req.user!.id }, data: { recheckReminderMonths: recheckReminderMonths || null } });
+  res.json({ recheckReminderMonths: recheckReminderMonths || null });
+}
+
+/**
+ * GET /api/profile/audit-log — the most recent 100 sensitive actions
+ * logged against this account (report views/downloads, share links
+ * created, dispute emails sent — see utils/auditLog.ts for the full
+ * list of call sites). Newest first. There's no pagination beyond that
+ * cap; this is meant as "what's happened on my account lately", not a
+ * full forensic export.
+ */
+export async function getAuditLog(req: AuthenticatedRequest, res: Response) {
+  const entries = await prisma.auditLogEntry.findMany({
+    where: { userId: req.user!.id },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    select: { id: true, action: true, reportId: true, detail: true, createdAt: true },
+  });
+  res.json({ entries });
 }

@@ -317,3 +317,129 @@ export interface ReportComparison {
   stats?: { previous: ReportDetail["stats"]; current: ReportDetail["stats"] };
   negativeMarkers?: { previous: NegativeMarkers; current: NegativeMarkers };
 }
+
+/** One row in a report's share-link management list — never carries the
+ * link's token or hash, only enough to show its status and usage. Matches
+ * backend/src/controllers/shareLinks.controller.ts's listShareLinks. */
+export interface ShareLinkRow {
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  lastViewedAt: string | null;
+  viewCount: number;
+}
+
+/** Returned once, at creation time, by createShareLink — `url` embeds the
+ * one-time raw token. It is never returned again by any other endpoint. */
+export interface CreateShareLinkResponse {
+  id: string;
+  url: string;
+  expiresAt: string;
+}
+
+/** Trimmed account row shown on a public share link — deliberately
+ * narrower than AccountRow (no bureauRef/satisfactionDate). */
+export interface SharedReportAccountRow {
+  id: string;
+  lenderName: string;
+  accountType: string;
+  status: AccountStatus;
+  currentBalance: string | null;
+  creditLimit: string | null;
+  defaultDate: string | null;
+  defaultBalance: string | null;
+}
+
+/** Trimmed alert row shown on a public share link — deliberately
+ * narrower than AlertRow (no id/relatedAccountIds). */
+export interface SharedReportAlertRow {
+  type: AlertType;
+  severity: AlertSeverity;
+  message: string;
+  createdAt: string;
+}
+
+/**
+ * The read-only view returned by GET /api/shared/:token — a trimmed
+ * subset of ReportDetail. Deliberately excludes rawText, document
+ * pins/inspector data, dateOfBirth, and full postal addresses; see
+ * backend/src/controllers/shareLinks.controller.ts's getSharedReport doc
+ * comment for the full reasoning.
+ */
+export interface SharedReportView {
+  bureau: Bureau;
+  sourceFileName: string;
+  uploadedAt: string;
+  applicantName: string | null;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH" | "SEVERE";
+  summary: string;
+  stats: ReportDetail["stats"];
+  negativeMarkers: NegativeMarkers;
+  creditScoreEstimate: CreditScoreEstimate;
+  accounts: SharedReportAccountRow[];
+  alerts: SharedReportAlertRow[];
+}
+
+/** Declaration merge onto DisputeRecordRow (declared further up this
+ * file) rather than editing that interface directly — adds the three
+ * fields backend/prisma/schema.prisma's DisputeRecord model carries for
+ * email dispatch and reminders (see disputes.controller.ts's
+ * sendDisputeEmail/runReminders), without touching the original
+ * declaration. TypeScript merges same-named interfaces in one file into a
+ * single type, so DisputeRecordRow has all of these fields either way. */
+export interface DisputeRecordRow {
+  /** Set only once the user has explicitly sent this letter by email from
+   * the app (see sendDisputeEmail) — distinct from `sentAt`, which is
+   * when they logged having sent it by whatever means, usually post. */
+  emailSentAt: string | null;
+  emailSentTo: string | null;
+  /** Set once the "deadline passed, no response" reminder has gone out
+   * for this dispute — see disputeReminders.ts / runReminders. Not shown
+   * directly in the UI; the deadline-passed banner is derived purely from
+   * `status`/`responseDeadline`, which stay accurate regardless of this. */
+  reminderSentAt: string | null;
+}
+
+/** Body for POST /disputes/:id/send-email — matches
+ * backend/src/controllers/disputes.controller.ts's sendDisputeEmailSchema
+ * exactly. `to` is always typed in by the user in DisputeTracker.tsx's own
+ * confirm panel, never guessed or pre-filled from anything on the report. */
+export interface SendDisputeEmailInput {
+  to: string;
+  templateId: string;
+  envelope?: EnvelopeSize;
+  signatureMode?: SignatureMode;
+}
+
+/** One entry in the "your devices" list on the settings page. Never
+ * carries the session's `jti` — just enough to show and manage it.
+ * Matches backend/src/controllers/auth.controller.ts's listSessions. */
+export interface SessionRow {
+  id: string;
+  label: string | null;
+  createdAt: string;
+  lastSeenAt: string;
+  revokedAt: string | null;
+  isCurrent: boolean;
+}
+
+/** One row of the account's audit log — see profile.controller.ts's
+ * getAuditLog. `reportId` is null for actions not tied to a specific
+ * report (there are none yet, but the field stays optional for that). */
+export interface AuditLogEntryRow {
+  id: string;
+  action: string;
+  reportId: string | null;
+  detail: string | null;
+  createdAt: string;
+}
+
+/** Declaration merge onto ProfileResponse (declared further up this
+ * file) — adds the opt-in periodic "time to re-check your credit file"
+ * reminder preference, without touching the original declaration. */
+export interface ProfileResponse {
+  /** Months between reminder emails (e.g. 3/6/12) — null/0 means off. */
+  recheckReminderMonths: number | null;
+  totpEnabled: boolean;
+}

@@ -58,10 +58,12 @@ This is a working scaffold, not a hardened production system. Specifically:
   boundaries; a per-account header line's own balance figure, which is
   glued to its update date the same way; and a hard/soft distinction
   for searches, which this report simply doesn't make).
-- **Auth is email+password only**, JWT-based with bcrypt hashing, plus a
-  token-based forgot/reset-password flow (see § Password reset below).
-  OAuth isn't wired up — `auth.controller.ts` has a comment on the
-  cleanest way to add it (Passport.js).
+- **Auth is email+password**, JWT-based with bcrypt hashing, a
+  token-based forgot/reset-password flow (see § Password reset below),
+  and optional TOTP two-factor authentication with backup codes plus a
+  real revocable session list (see § Account security). OAuth isn't
+  wired up — `auth.controller.ts` has a comment on the cleanest way to
+  add it (Passport.js).
 - **Login, signup and upload are rate-limited** (`middleware/rateLimit.ts`,
   via `express-rate-limit`) — 20 auth attempts per 15 minutes and 30
   uploads per hour, both keyed by IP. Tune the limits there if they're
@@ -102,9 +104,20 @@ This is a working scaffold, not a hardened production system. Specifically:
   and date handling, the structured Judgments parse and its fallback
   to a keyword scan for unrecognised row layouts, Search parsing for
   both known and unrecognised purpose phrases, and the no-accounts-found
-  warning path. The analytics engine's internal anomaly detection and
-  the generic fallback parser still don't have coverage — this is a
-  starting point, not a finished suite.
+  warning path; `src/services/analytics/disputeReminders.test.ts` covers
+  which disputes/users are due a reminder email and which aren't (already
+  reminded, no deadline yet, opted out, wrong interval elapsed);
+  `src/utils/totp.test.ts` covers backup-code hashing/single-use
+  consumption; `src/utils/session.test.ts` covers the best-effort
+  browser/OS summary used on the "your devices" list, including not
+  mistaking Chrome's own `Safari/` token for real Safari, and correctly
+  reading an iPhone as iOS rather than macOS despite its UA string
+  literally containing "like Mac OS X" (checking for `iPhone|iPad`
+  before the `Mac OS X` pattern is what this test guards against
+  regressing). The analytics engine's internal anomaly detection
+  and the generic fallback parser still don't have coverage — this is a
+  starting point, not a finished suite. 128 tests pass as of this
+  writing (`cd backend && npm test`).
 - **All three phases of the auditor/dispute-engine work are in place** —
   see [§ Statutory dispute tools](#statutory-dispute-tools) for the
   notice-of-correction template, envelope-ready PDF export, and
@@ -152,13 +165,17 @@ reusing an existing page/endpoint rather than duplicating its logic:
    tools](#statutory-dispute-tools) below) and the [statutory contact
    registry](#regulatory-toolkit--escalation-hub) at `/registry`.
 5. **Enhancement Suite** (`/remediate/5`) — links to `/enhancement-suite`,
-   7 self-contained client-side tools: a Notice of Correction word-count
+   9 self-contained client-side tools: a Notice of Correction word-count
    scratchpad, a credit-utilisation simulator, a mortgage-readiness
    checklist, a search-impact (12-month drop-off) countdown, a CCJ/default
-   cost-of-waiting estimator, a dispute-lifecycle checklist, and a
-   next-best-action summary pulled from the report's own already-computed
-   `suggestedActions`. Every calculator on this page is explicitly labelled
-   as illustrative/educational, never financial or legal advice.
+   cost-of-waiting estimator, a debt payoff calculator (snowball vs.
+   avalanche, simulated month-by-month from the report's own active
+   balances), a mortgage/loan affordability estimate (a debt-to-income
+   illustration against a handful of illustrative income multiples), a
+   dispute-lifecycle checklist, and a next-best-action summary pulled from
+   the report's own already-computed `suggestedActions`. Every calculator
+   on this page is explicitly labelled as illustrative/educational, never
+   financial or legal advice.
 
 Two more standalone pages: `/registry` (a dedicated directory view of the
 existing bureau/court/ICO/FOS contact data — see
@@ -267,7 +284,23 @@ emailed (safe for local dev, useless for real users). To send real
 emails, set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and
 optionally `SMTP_FROM` on the backend service; also set `FRONTEND_URL`
 if it differs from `CORS_ORIGIN`'s first entry (the reset link is built
-from whichever of the two is set).
+from whichever of the two is set). The same SMTP config is what
+"send by email" (see § Sending, reminders and one-click dispute links)
+and the recheck/deadline reminder emails use — without it, those actions
+still "succeed" from the user's point of view, just logging the email
+content to the console instead of delivering it, same as the reset flow.
+
+### Reminders — optional scheduler setup
+
+`POST /api/disputes/run-reminders` does nothing unless it's actually
+called on a schedule, since this app has no background job runner of
+its own. Set `INTERNAL_TASK_SECRET` on the backend service to a random
+value, then point any external scheduler that can do a timed HTTP POST
+(a Render cron job, a GitHub Actions workflow on a `schedule` trigger,
+even a plain system cron hitting `curl`) at that route once a day with
+header `x-internal-secret: <the same value>`. Leave the env var unset
+and the route 404s — a safe default for a deployment that doesn't want
+this running at all.
 
 ## Deploying it to the web
 
@@ -327,8 +360,28 @@ Defined in `backend/prisma/schema.prisma`:
   `deadlineBasis` — `"statutory"` for the 28-day CRA investigation
   window, `"advisory"` for a suggested follow-up point on letters with
   no fixed legal deadline), and its status (`SENT` / `RESOLVED` /
-  `NO_RESPONSE`). Powers the "Progress over time" and "Disputes sent"
-  sections on the report page.
+  `NO_RESPONSE`). Also carries `emailSentAt`/`emailSentTo` (set once the
+  letter's been sent through the app itself — see § Sending, reminders
+  and one-click dispute links) and `reminderSentAt` (so a deadline-
+  passed reminder email only ever goes out once per dispute). Powers
+  the "Progress over time" and "Disputes sent" sections on the report
+  page.
+- **ShareLink** — a time-limited, revocable read-only link to one
+  report. Stores only a SHA-256 hash of the token, never the raw
+  value, plus `expiresAt`/`revokedAt` and view tracking
+  (`lastViewedAt`/`viewCount`) — see § Sharing a report.
+- **Session** — one row per issued JWT (keyed by its `jti` claim):
+  `label` (a best-effort browser/OS summary), `createdAt`,
+  `lastSeenAt`, and `revokedAt`. What makes "log out this device" and
+  session revocation possible at all — see § Account security.
+- **AuditLogEntry** — a best-effort record of a sensitive account
+  action (report viewed/downloaded, share link created, dispute email
+  sent) — see § Account security.
+- `User` additionally carries `totpSecret`/`totpEnabled`/
+  `totpBackupCodeHashes` (two-factor authentication) and
+  `recheckReminderMonths`/`lastRecheckReminderAt` (the opt-in periodic
+  recheck-reminder preference) — see § Account security and § Sending,
+  reminders and one-click dispute links.
 
 ## Key backend routes
 
@@ -339,9 +392,17 @@ also rate-limited (`middleware/rateLimit.ts`).
 | Method & path | What it does |
 |---|---|
 | `POST /api/auth/register` | Create an account, returns a JWT |
-| `POST /api/auth/login` | Returns a JWT |
+| `POST /api/auth/login` | Returns a JWT, or — if the account has 2FA enabled — `{ requiresTotp: true, pendingToken }` instead (see § Account security) |
+| `POST /api/auth/login/verify-totp` | Body `{ pendingToken, code }` — completes login for a 2FA-enabled account with a TOTP code or a backup code |
 | `POST /api/auth/forgot-password` | Always returns the same generic message; if the email matches an account, emails (or, without SMTP configured, logs) a password-reset link |
-| `POST /api/auth/reset-password` | Body `{ token, password }` — sets a new password if the token is valid and unexpired (1 hour) |
+| `POST /api/auth/reset-password` | Body `{ token, password }` — sets a new password if the token is valid and unexpired (1 hour); also revokes every existing session |
+| `POST /api/auth/2fa/setup` | Generates a new TOTP secret + QR code, not yet enabled |
+| `POST /api/auth/2fa/confirm` | Body `{ code }` — verifies the code from setup and enables 2FA, returning one-time backup codes |
+| `POST /api/auth/2fa/disable` | Body `{ password }` — disables 2FA after re-confirming the account password |
+| `GET /api/auth/sessions` | Lists every session (device) for the account, current one flagged |
+| `DELETE /api/auth/sessions/:sessionId` | Revokes one session |
+| `POST /api/auth/sessions/revoke-others` | Revokes every session except the caller's own |
+| `POST /api/auth/logout` | Revokes the current session |
 | `POST /api/reports` | Multipart upload (`file` field, PDF or CSV) → extract text → parse → persist → returns `{ reportId, riskSummary }` |
 | `GET /api/reports` | List the caller's reports with account/alert counts |
 | `GET /api/reports/:id` | Full report detail: stats, accounts, events, alerts (each with `relatedAccountIds`), `insights` (risk level, plain-English summary, suggested actions), `negativeMarkers` (CCJ/default/utilisation/search counts and totals), and `identityCheck` (live comparison of this report's own application details against the caller's confirmed profile — see § Confirmed identity vs. report data) |
@@ -355,12 +416,21 @@ also rate-limited (`middleware/rateLimit.ts`).
 | `PATCH /api/accounts/:id/lender-contact` | Set or clear the postal address for that account's lender (shared across every account for the same lender) |
 | `GET /api/contacts` | Verified UK postal addresses/contact details for Experian, Equifax, TransUnion, the CCJ court centre (Civil National Business Centre), the ICO, and the Financial Ombudsman Service |
 | `GET /api/profile` / `PATCH /api/profile` | Read/update the caller's self-declared `fullName` / `postalAddress` / `dateOfBirth` / `electoralRollRegistered`; response includes `identityConfirmed` (true once name/DOB/address are all set) — see § Confirmed identity vs. report data |
+| `PATCH /api/profile/recheck-reminder` | Body `{ recheckReminderMonths }` (`1`/`3`/`6`/`12`/`null`) — its own tiny endpoint so this one preference can be saved without resending the whole profile form |
+| `GET /api/profile/audit-log` | The caller's most recent 100 account-activity entries — see § Account security |
 | `POST /api/disputes` | Body `{ reportId, templateId, recipient }` — logs that a dispute letter was sent, with a computed follow-up deadline |
 | `GET /api/disputes?reportId=<id>` | Lists dispute records for a report |
 | `PATCH /api/disputes/:id` | Body `{ status?, notes? }` — mark a dispute `RESOLVED` / `NO_RESPONSE`, or add notes |
 | `GET /api/disputes/:id/tracking-sheet-pdf?service=<text>&cost=<text>` | A plain, unbranded "postage record" PDF for one logged dispute — see § Statutory dispute tools |
 | `GET /api/disputes/:id/escalation-pack-pdf` | A bundled PDF (case summary, the letter as sent, escalation authority contact + dated milestones) for one logged dispute — 400s for a CCJ dispute, which has no ICO/FOS escalation route — see § Regulatory toolkit & escalation hub |
+| `POST /api/disputes/:id/send-email` | Body `{ to, templateId, envelope?, signatureMode? }` — sends the letter as a reviewed, explicit action — see § Sending, reminders and one-click dispute links |
+| `GET /api/disputes/:id/pack.zip` | The letter, tracking sheet, and (where applicable) escalation pack bundled into one zip |
+| `POST /api/disputes/run-reminders` | Unauthenticated, gated by an `x-internal-secret` header — meant to be called by an external scheduler, not from inside the app — see § Sending, reminders and one-click dispute links |
 | `GET /api/reconciliation` | Cross-references the user's most recent real (non-sample) report from each bureau to flag accounts reported inconsistently between them — see § Regulatory toolkit & escalation hub |
+| `POST /api/reports/:id/share-links` | Body `{ expiresInHours }` — creates a time-limited share link, returning the one-time raw URL — see § Sharing a report |
+| `GET /api/reports/:id/share-links` | Lists every share link created for a report (never the raw token) |
+| `DELETE /api/reports/:id/share-links/:linkId` | Revokes a share link immediately |
+| `GET /api/shared/:token` | Unauthenticated — the trimmed, read-only public view of a shared report |
 
 `uploadReport` (`controllers/reports.controller.ts`) is the whole
 pipeline in one place: extract text → `parseReportText()` →
@@ -394,12 +464,20 @@ a second round trip.
   labelled "response window" for the statutory 28-day CRA deadline vs
   "suggested follow-up" for the advisory ones), a "Tracking sheet"
   download button, an "Escalation pack" download button (for every
-  template except CCJ, which has no ICO/FOS route), an ICO escalation
-  note once a statutory deadline has passed, plus buttons to mark a
-  dispute resolved or unanswered.
+  template except CCJ, which has no ICO/FOS route), a deadline-passed
+  banner, a "Download pack (.zip)" button, an explicit-review "Send by
+  email" panel (recipient field, letter-preview link, mandatory review
+  checkbox — see § Sending, reminders and one-click dispute links), an
+  ICO escalation note once a statutory deadline has passed, plus
+  buttons to mark a dispute resolved or unanswered.
 - **`ComparisonPanel`** — a before/after table of risk level and
   negative markers against the user's previous report, with
   improved/worse deltas (a decrease in CCJs/defaults/etc is "better").
+- **`ShareReportPanel`** — create/list/revoke time-limited share links
+  for a report — see § Sharing a report.
+- **`SecuritySettingsPanel`** — the settings page's 2FA setup/disable
+  flow, device/session list, recheck-reminder preference, and account
+  activity log — see § Account security.
 
 Pages: `DashboardPage` (list + upload, with a "how it works" walkthrough
 for new users and a "Sample data" badge on the seeded fixture report),
@@ -416,13 +494,19 @@ so a report can be removed and re-uploaded), `ReportInspectorPage`
 `AccountDetailPage` (single account, an editable lender/agent contact
 address, balance chart, and timeline), `ReconciliationPage` (the
 tri-bureau reconciliation matrix — see § Regulatory toolkit &
-escalation hub, linked from the header nav), `SettingsPage`
-(self-declared name/date of birth/address for letter auto-fill and the
-profile-vs-report check, an electoral-roll registration note, and a
-confirmed/not-confirmed identity banner — all explicitly labelled as
-self-declared, never independently verified), `ForgotPasswordPage` /
-`ResetPasswordPage`. Auth state lives in `AuthContext` and the JWT
-sits in `localStorage`.
+escalation hub, linked from the header nav, with discrepant cells now
+linking straight into a pre-selected dispute template on the right
+report/account), `SettingsPage` (self-declared name/date of
+birth/address for letter auto-fill and the profile-vs-report check, an
+electoral-roll registration note, a confirmed/not-confirmed identity
+banner — all explicitly labelled as self-declared, never independently
+verified — and, below that, the `SecuritySettingsPanel` described
+above), `SharedReportPage` (the public, unauthenticated view a share
+link opens — see § Sharing a report), `LandingPage` (the public
+marketing page shown at `/` to a signed-out visitor — see § Landing
+page), `ForgotPasswordPage` / `ResetPasswordPage`. Auth state lives in
+`AuthContext` and the JWT sits in `localStorage`; `LoginPage` has a
+second step for a 2FA-enabled account (see § Account security).
 
 ## Statutory dispute tools
 
@@ -491,6 +575,118 @@ paperwork). See § Confirmed identity vs. report data for Phase 2 and
   escalation becomes available; for an advisory letter (CCJ/debt
   validation), just a suggested follow-up date, since those have no
   fixed statutory deadline or s.159 escalation route.
+
+## Sending, reminders and one-click dispute links
+
+Built on top of the dispute tools above, so a generated letter doesn't
+just sit as a download:
+
+- **Explicit-review email dispatch** (`POST /api/disputes/:id/send-email`,
+  `DisputeTracker`'s "Send by email" panel). Deliberately a synchronous,
+  single click the user makes themselves, never a background/automatic
+  send: the recipient address is typed by hand (never auto-filled from a
+  bureau's own contact record, so a stale or wrong address can't be
+  silently reused), a "preview the letter first" link sits next to the
+  field, and a mandatory "I have reviewed this letter and want to send it
+  now" checkbox gates the button. `sendMail` (see `utils/mailer.ts`) is
+  reused from the password-reset flow, now with attachment support; the
+  action is logged to `emailSentAt`/`emailSentTo` on the dispute record
+  and to the account's audit log (see § Account security below) either
+  way, whether or not SMTP is actually configured for this deployment.
+- **Reminders** (`POST /api/disputes/run-reminders`,
+  `services/analytics/disputeReminders.ts`). Two kinds, sent in one
+  batch: a nudge for any dispute past its statutory response deadline
+  with no status update logged, and an opt-in periodic "time to
+  re-check your credit file" email (see the Security section on the
+  settings page — off by default, 1/3/6/12-month options). This is a
+  plain unauthenticated route gated by an `x-internal-secret` header
+  checked against `INTERNAL_TASK_SECRET` (404s if that env var isn't
+  set), meant to be hit by an external scheduler (a Render cron job, a
+  GitHub Actions workflow, anything that can do an HTTP POST on a
+  timer) rather than run from inside the app's own request cycle — this
+  app has no background job runner, so "on a schedule" has to come from
+  outside it. `DeadlinePassedBanner` on `DisputeTracker` also surfaces a
+  missed deadline directly in the UI regardless of whether the reminder
+  email ever got sent.
+- **One-click dispute pack** (`GET /api/disputes/:id/pack.zip`,
+  `services/export/disputePackZip.ts`). Bundles the letter PDF, the
+  postage tracking sheet, and — where the template has an ICO/FOS
+  escalation route — the escalation pack, into one zip, so posting a
+  dispute doesn't mean downloading three separate files by hand.
+- **One-click "dispute this" links from reconciliation**
+  (`ReconciliationPage.tsx`). A discrepant cell now links straight to
+  `/reports/:id?template=general_accuracy&focusAccountId=:accountId`,
+  which pre-selects the accuracy-dispute template on that report's
+  detail page and scrolls/highlights the specific account row
+  (`AccountTable`'s `focusAccountId` prop) — no more hunting for the
+  right account after spotting a mismatch in the reconciliation table.
+
+## Sharing a report
+
+`POST /api/reports/:id/share-links` creates a time-limited, revocable
+link (`ShareReportPanel.tsx` on the report detail page; expiry is
+chosen at creation time). The link's token is never stored — only its
+SHA-256 hash (`shareLinks.controller.ts`, the same never-store-the-raw-
+secret pattern the password-reset flow already used) — so a database
+read alone can't produce a working link. `GET /api/shared/:token`
+(unauthenticated, `SharedReportPage.tsx`) serves a deliberately trimmed
+view: no raw extracted text, no date of birth or full postal address, no
+identity-check result, no event log, and no dispute records — just the
+report's accounts, stats, negative markers and risk summary, since the
+whole point is showing a broker or adviser the analysis without handing
+them everything the account holder themselves can see. An
+expired/revoked/unknown token gets the same generic 404 either way, so a
+guess can't distinguish "wrong token" from "right token, expired."
+Revoking a link (`DELETE .../share-links/:linkId`) takes effect
+immediately — the public route checks `revokedAt`/`expiresAt` on every
+request, not just at creation.
+
+## Account security
+
+The settings page's "Security" section (`SecuritySettingsPanel.tsx`):
+
+- **Two-factor authentication** (TOTP, `utils/totp.ts` via `otplib`).
+  Enabling it walks through scan-the-QR-code → confirm a live 6-digit
+  code → one-time display of 8 backup codes (bcrypt-hashed at rest,
+  single-use) that the user must tick "I've saved these" to dismiss.
+  Once enabled, `POST /api/auth/login` returns `{ requiresTotp: true,
+  pendingToken }` instead of a real session token — `pendingToken` is a
+  short-lived (10 minute), distinctly-shaped JWT that `requireAuth`
+  never accepts, good for nothing except `POST
+  /api/auth/login/verify-totp`. Disabling 2FA requires re-entering the
+  account password.
+- **Session/device list** (`Session` Prisma model; every JWT now
+  carries a `jti` claim that maps to a row there). `requireAuth` does a
+  real per-request DB check that the session hasn't been revoked —
+  something a plain stateless JWT can't support on its own — which is
+  what makes "log out this device" and "log out all other devices"
+  (`GET`/`DELETE /api/auth/sessions`,
+  `POST /api/auth/sessions/revoke-others`) actually work, not just
+  clear local storage. A password reset now also revokes every existing
+  session as a matter of course.
+- **Account activity log** (`AuditLogEntry` model, `utils/auditLog.ts`).
+  A best-effort, fire-and-forget record of report views/downloads,
+  share links created, and dispute letters sent by email — shown as a
+  plain scrollable list, newest first, capped at the most recent 100
+  (`GET /api/profile/audit-log`). Deliberately fire-and-forget: a
+  logging failure must never be the reason a real action (viewing a
+  report, sending a letter) fails, so `logAudit` swallows its own
+  errors.
+
+## Landing page
+
+`/` shows a public marketing page (`LandingPage.tsx`) to a signed-out
+visitor and the dashboard to a signed-in one — the same URL does both,
+so a bookmark or a shared link to the root always resolves sensibly for
+whoever opens it (`App.tsx`'s `HomeRoute`). It follows the same
+honesty-first house style as the rest of the app: alongside the feature
+list, it says outright that the credit score shown is this app's own
+estimate rather than a real bureau score, that nothing connects to a
+real credit reference agency, that self-declared identity fields aren't
+verified against any register, and that every Enhancement Suite
+calculator is educational rather than advice — the same caveats made
+throughout the app itself, just surfaced before signup rather than
+after.
 
 ## Confirmed identity vs. report data
 
@@ -900,21 +1096,13 @@ run once at upload time (`reportPersistence.ts`) and persisted as
   access to lock in a real migration history (and swap `db push` back
   out of `backend/package.json`'s `start` script for `prisma migrate
   deploy` once you do).
-- **Add direct email dispatch of dispute letters**: the dispute flow
-  generates letter text/PDFs and lets the user download and send them
-  themselves, but there's no "send this letter by email" button that
-  actually dispatches it from the app (nodemailer is already a
-  dependency, used today only for the password-reset flow — see
-  `auth.controller.ts` — so wiring a real send would reuse that same
-  transport). Deliberately not built without the user seeing this
-  called out first, since auto-sending a legal notice on someone's
-  behalf is a bigger trust step than generating one for them to review.
-- **Add one-click "dispute this" links from the reconciliation table**:
-  `/reconciliation` flags which accounts differ by bureau but doesn't
-  yet deep-link a flagged row straight into that account's report page
-  with a dispute template pre-selected — worth adding once there's a
-  reliable way to map a reconciliation row's `accountId` (per bureau) to
-  the right report + template combination.
+- **Extend cross-report comparison with explicit added/dropped account
+  deltas**: `ComparisonPanel.tsx`/`getReportComparison` already gives a
+  numeric before/after comparison (see the note just below), but it's
+  still just the stats — a named list of "these accounts appeared" /
+  "these accounts disappeared" between two uploads of the same bureau
+  isn't built yet. Would need to match accounts across reports by
+  `bureauRef` (already stored per account) rather than by database id.
 - **`ComparisonPanel.tsx` vs. the reconciliation table**: these are two
   different comparisons — `ComparisonPanel` shows one report's own stats
   over time (this upload vs. your previous one), while the new

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api/client";
 import { AppShell } from "../components/AppShell";
+import { SecuritySettingsPanel } from "../components/SecuritySettingsPanel";
 
 export function SettingsPage() {
   const [fullName, setFullName] = useState("");
@@ -134,6 +135,12 @@ export function SettingsPage() {
           </div>
         </div>
       )}
+
+      <h1 className="mt-10 text-xl font-semibold text-slate-100">Security</h1>
+      <p className="mt-1 text-sm text-slate-400">
+        Two-factor authentication, the devices signed in to your account, and an optional reminder to check your report again later.
+      </p>
+      <SecuritySettingsPanel />
     </AppShell>
   );
 }

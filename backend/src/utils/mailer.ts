@@ -5,6 +5,7 @@ interface MailInput {
   to: string;
   subject: string;
   text: string;
+  attachments?: { filename: string; content: Buffer }[];
 }
 
 let transporter: ReturnType<typeof nodemailer.createTransport> | null = null;
@@ -29,13 +30,16 @@ function getTransporter() {
  * forgot-password flow itself (the account isn't enumerable either way —
  * see auth.controller.ts).
  */
-export async function sendMail({ to, subject, text }: MailInput): Promise<{ sent: boolean }> {
+export async function sendMail({ to, subject, text, attachments }: MailInput): Promise<{ sent: boolean }> {
   const t = getTransporter();
   if (!t) {
     // eslint-disable-next-line no-console
-    console.log(`[mailer] SMTP not configured — would have sent to ${to}:\nSubject: ${subject}\n\n${text}`);
+    console.log(
+      `[mailer] SMTP not configured — would have sent to ${to}:\nSubject: ${subject}\n\n${text}` +
+        (attachments?.length ? `\n(with ${attachments.length} attachment(s): ${attachments.map((a) => a.filename).join(", ")})` : "")
+    );
     return { sent: false };
   }
-  await t.sendMail({ from: env.smtp.from, to, subject, text });
+  await t.sendMail({ from: env.smtp.from, to, subject, text, attachments });
   return { sent: true };
 }

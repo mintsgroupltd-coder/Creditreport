@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import {
   ContactsResponse,
@@ -20,6 +20,7 @@ import { ComparisonPanel } from "../components/ComparisonPanel";
 import { ContactsPanel } from "../components/ContactsPanel";
 import { DisputeTracker } from "../components/DisputeTracker";
 import { RiskBadge } from "../components/RiskBadge";
+import { ShareReportPanel } from "../components/ShareReportPanel";
 import { StatCard } from "../components/StatCard";
 
 function money(value: number): string {
@@ -34,10 +35,19 @@ function countWords(text: string): number {
 export function ReportDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Deep-link target from the reconciliation table's "Dispute this" links
+  // (see ReconciliationPage.tsx) — ?template=... pre-selects a dispute
+  // template and ?focusAccountId=... highlights/scrolls to that account
+  // below, so following a flagged discrepancy straight into a dispute
+  // doesn't require re-finding the account by hand.
+  const focusAccountId = searchParams.get("focusAccountId");
   const [data, setData] = useState<ReportDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<DisputeTemplateOption[]>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState<DisputeTemplateId>("auto");
+  const [selectedTemplate, setSelectedTemplate] = useState<DisputeTemplateId>(
+    () => (searchParams.get("template") as DisputeTemplateId | null) ?? "auto"
+  );
   const [disputeText, setDisputeText] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
   const [contacts, setContacts] = useState<ContactsResponse | null>(null);
@@ -266,6 +276,7 @@ export function ReportDetailPage() {
           >
             {downloadingPdf ? "Preparing…" : "Download as PDF"}
           </button>
+          {id && <ShareReportPanel reportId={id} />}
           <button
             onClick={handleDelete}
             disabled={deleting}
@@ -536,7 +547,7 @@ export function ReportDetailPage() {
       <section className="mt-8">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Accounts</h2>
         <div className="mt-3">
-          <AccountTable accounts={data.accounts} />
+          <AccountTable accounts={data.accounts} focusAccountId={focusAccountId} />
         </div>
       </section>
     </AppShell>

@@ -18,6 +18,7 @@ import { checkProfileIdentityMatch } from "../services/analytics/identityCheck";
 import { buildDocumentPins } from "../services/analytics/documentPins";
 import { extractBureauRefs } from "../services/analytics/relatedRefs";
 import { DisputeScheduleRow, EnvelopeSize, renderDisputeLetterPdf, SignatureMode } from "../services/pdf/disputeLetterPdf";
+import { logAudit } from "../utils/auditLog";
 
 export async function uploadReport(req: AuthenticatedRequest, res: Response) {
   if (!req.file) throw new HttpError(400, "No file uploaded — expected a multipart field named 'file'");
@@ -130,6 +131,7 @@ export function computeStatsAndMarkers(report: OwnedReport) {
 
 export async function getReport(req: AuthenticatedRequest, res: Response) {
   const report = await loadOwnedReport(req.params.id, req.user!.id);
+  logAudit(req.user!.id, "VIEW_REPORT", { reportId: report.id });
   const { stats, negativeMarkers } = computeStatsAndMarkers(report);
 
   const accountIdByBureauRef = new Map<string, string>();
@@ -395,6 +397,7 @@ export async function getDisputePdf(req: AuthenticatedRequest, res: Response) {
   const input = await buildDisputeLetterInput(report, req.user!.id, correctionStatement);
   const parts = buildDisputeLetterParts(input, templateId);
   const schedule = buildDisputeSchedule(input);
+  logAudit(req.user!.id, "DOWNLOAD_PDF", { reportId: report.id, detail: `dispute letter (${templateId})` });
 
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename="dispute-letter-${templateId}${envelope !== "none" ? `-${envelope}` : ""}.pdf"`);

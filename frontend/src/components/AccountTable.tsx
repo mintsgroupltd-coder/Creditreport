@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { AccountRow } from "../api/types";
 
@@ -19,10 +19,23 @@ function money(value: string | null): string {
   return Number.isFinite(n) ? `£${n.toLocaleString("en-GB")}` : "—";
 }
 
-export function AccountTable({ accounts }: { accounts: AccountRow[] }) {
+/** `focusAccountId`, when set, comes from a deep link (e.g. the
+ * reconciliation table's "Dispute this" links via ReportDetailPage.tsx's
+ * `?focusAccountId=` query param) — the matching row scrolls into view
+ * and gets a temporary highlight ring so it's easy to find among
+ * potentially dozens of accounts, without needing its own search/filter
+ * step first. */
+export function AccountTable({ accounts, focusAccountId }: { accounts: AccountRow[]; focusAccountId?: string | null }) {
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("lender");
   const [sortDesc, setSortDesc] = useState(false);
+  const focusRowRef = useRef<HTMLTableRowElement | null>(null);
+
+  useEffect(() => {
+    if (focusAccountId && focusRowRef.current) {
+      focusRowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [focusAccountId]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -92,7 +105,13 @@ export function AccountTable({ accounts }: { accounts: AccountRow[] }) {
               </tr>
             )}
             {visible.map((a) => (
-              <tr key={a.id} className="border-b border-border/60 last:border-0 hover:bg-panel/60">
+              <tr
+                key={a.id}
+                ref={a.id === focusAccountId ? focusRowRef : undefined}
+                className={`border-b border-border/60 last:border-0 hover:bg-panel/60 ${
+                  a.id === focusAccountId ? "bg-accent/10 ring-1 ring-inset ring-accent" : ""
+                }`}
+              >
                 <td className="px-4 py-3">
                   <Link to={`/accounts/${a.id}`} className="font-medium text-slate-100 hover:text-accent hover:underline">
                     {a.lenderName}

@@ -1,6 +1,8 @@
 import {
   AccountDetail,
+  AuditLogEntryRow,
   ContactsResponse,
+  CreateShareLinkResponse,
   DisputeListResponse,
   DisputeRecordRow,
   DisputeStatus,
@@ -13,11 +15,15 @@ import {
   ReportDetail,
   ReportSummary,
   RiskSummary,
+  SessionRow,
+  ShareLinkRow,
+  SharedReportView,
   SignatureMode,
   SimulatedCreditFileResponse,
   SimulatedTokenResponse,
   SimulatedVerifyIdentityResponse,
 } from "./types";
+import { SendDisputeEmailInput } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
 
@@ -64,10 +70,32 @@ export const api = {
     }),
 
   login: (email: string, password: string) =>
-    request<{ token: string; user: { id: string; email: string } }>("/auth/login", {
+    request<{ token: string; user: { id: string; email: string } } | { requiresTotp: true; pendingToken: string }>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
+
+  loginVerifyTotp: (pendingToken: string, code: string) =>
+    request<{ token: string; user: { id: string; email: string } }>("/auth/login/verify-totp", {
+      method: "POST",
+      body: JSON.stringify({ pendingToken, code }),
+    }),
+
+  logout: () => request<{ loggedOut: true }>("/auth/logout", { method: "POST" }),
+
+  setupTotp: () => request<{ secret: string; otpauthUrl: string; qrCodeDataUrl: string }>("/auth/2fa/setup", { method: "POST" }),
+
+  confirmTotp: (code: string) =>
+    request<{ enabled: true; backupCodes: string[] }>("/auth/2fa/confirm", { method: "POST", body: JSON.stringify({ code }) }),
+
+  disableTotp: (password: string) =>
+    request<{ enabled: false }>("/auth/2fa/disable", { method: "POST", body: JSON.stringify({ password }) }),
+
+  listSessions: () => request<{ sessions: SessionRow[] }>("/auth/sessions"),
+
+  revokeSession: (sessionId: string) => request<{ revoked: true }>(`/auth/sessions/${sessionId}`, { method: "DELETE" }),
+
+  revokeOtherSessions: () => request<{ revokedCount: number }>("/auth/sessions/revoke-others", { method: "POST" }),
 
   uploadReport: (file: File) => {
     const form = new FormData();
@@ -120,6 +148,22 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ fullName, postalAddress, dateOfBirth, electoralRollRegistered }),
     }),
+
+  /** Sets or clears the opt-in "time to re-check your credit file"
+   * reminder — its own endpoint (not updateProfile above) specifically so
+   * this can be saved on its own without resending the rest of the
+   * identity form, which updateProfile's schema requires in full every
+   * time (see profile.controller.ts). */
+  updateRecheckReminder: (recheckReminderMonths: number | null) =>
+    request<{ recheckReminderMonths: number | null }>("/profile/recheck-reminder", {
+      method: "PATCH",
+      body: JSON.stringify({ recheckReminderMonths }),
+    }),
+
+  /** Most recent 100 sensitive account actions (report views/downloads,
+   * share links created, dispute emails sent), newest first — see
+   * profile.controller.ts's getAuditLog. */
+  getAuditLog: () => request<{ entries: AuditLogEntryRow[] }>("/profile/audit-log"),
 
   listDisputes: (reportId: string) => request<DisputeListResponse>(`/disputes?reportId=${encodeURIComponent(reportId)}`),
 
@@ -232,6 +276,55 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ access_token: accessToken, reportId }),
     }),
+
+  createShareLink: (reportId: string, expiresInHours: number) =>
+    request<CreateShareLinkResponse>(`/reports/${reportId}/share-links`, {
+      method: "POST",
+      body: JSON.stringify({ expiresInHours }),
+    }),
+
+  listShareLinks: (reportId: string) => request<{ shareLinks: ShareLinkRow[] }>(`/reports/${reportId}/share-links`),
+
+  revokeShareLink: (reportId: string, linkId: string) =>
+    request<ShareLinkRow>(`/reports/${reportId}/share-links/${linkId}/revoke`, { method: "PATCH" }),
+
+  /** Unauthenticated on purpose — this is the public share-link viewing
+   * endpoint, so it bypasses `request()` (which always attaches an
+   * Authorization header when a token happens to be in localStorage) and
+   * calls fetch directly instead. */
+  async getSharedReport(token: string): Promise<SharedReportView> {
+    const res = await fetch(`${API_BASE}/shared/${token}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, body.error ?? "This share link is invalid, expired, or has been revoked.");
+    }
+    return res.json();
+  },
+
+  /** Explicit, user-initiated send of a dispute letter by email — never
+   * automatic. Called only from DisputeTracker.tsx's own confirm panel,
+   * after the user has ticked "I have reviewed this letter and want to
+   * send it now". Returns the updated DisputeRecordRow (emailSentAt/
+   * emailSentTo now set) on success. */
+  sendDisputeEmail: (disputeId: string, input: SendDisputeEmailInput) =>
+    request<DisputeRecordRow>(`/disputes/${disputeId}/send-email`, { method: "POST", body: JSON.stringify(input) }),
+
+  /** The one-click "everything for this dispute" zip — letter, escalation
+   * pack (when this template has one), and postage tracking sheet, plus a
+   * README. Not JSON/text, so this bypasses `request()` and returns a
+   * Blob, same pattern as downloadDisputePdf/downloadEscalationPackPdf
+   * above. */
+  async downloadDisputePackZip(disputeId: string): Promise<Blob> {
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/disputes/${disputeId}/pack.zip`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, body.error ?? "Could not build the dispute pack");
+    }
+    return res.blob();
+  },
 };
 
 export { ApiError };
