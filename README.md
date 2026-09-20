@@ -37,13 +37,18 @@ This is a working scaffold, not a hardened production system. Specifically:
   it still surfaces a warning even when it parses cleanly, and anything
   that doesn't match falls all the way back to the same conservative
   keyword scan the generic parser uses.
-- **TransUnion is still best-effort.** Its report layout wasn't
-  available to build and test a dedicated parser against, so it falls
-  back to a generic keyword/pattern scanner (`genericFallbackParser.ts`).
-  Expect lower accuracy — the UI surfaces a warning whenever this path
-  is used. See [§ Parsing engine](#parsing-engine) for how to upgrade
-  it to a dedicated parser once you have a real sample, following the
-  same approach used for Experian and Equifax.
+- **The TransUnion parser is real and tested too**, built and checked
+  against a real 189-page TransUnion UK "My Credit Report" export the
+  same way the Experian and Equifax parsers were — see
+  [§ Parsing engine](#parsing-engine) for what it covers (accounts
+  across all four category subsections, Judgments/CCJs, Searches,
+  Address Link history, Personal Information) and what it deliberately
+  doesn't (the monthly Status/Balance/Limit/Statement/Payment history
+  grids — TransUnion's export glues adjacent months' figures together
+  with no separator, so reconstructing them would mean guessing digit
+  boundaries; a per-account header line's own balance figure, which is
+  glued to its update date the same way; and a hard/soft distinction
+  for searches, which this report simply doesn't make).
 - **Auth is email+password only**, JWT-based with bcrypt hashing, plus a
   token-based forgot/reset-password flow (see § Password reset below).
   OAuth isn't wired up — `auth.controller.ts` has a comment on the
@@ -79,9 +84,18 @@ This is a working scaffold, not a hardened production system. Specifically:
   `src/services/analytics/reconciliation.test.ts` covers the tri-bureau
   matrix (not-eligible states, lender+type matching across bureaus by
   ID rather than bureau reference, missing/status/balance discrepancy
-  detection, and the balance-tolerance threshold). The analytics
-  engine's internal anomaly detection and the other parsers still don't
-  have coverage — this is a starting point, not a finished suite.
+  detection, and the balance-tolerance threshold);
+  `src/services/parsing/transunionParser.test.ts` covers account block
+  splitting across all four category subsections (including a real
+  page-break artefact where a category heading lands mid-block),
+  inline-vs-preceding-line organisation name derivation, status
+  classification for all four status words, default/satisfied balance
+  and date handling, the structured Judgments parse and its fallback
+  to a keyword scan for unrecognised row layouts, Search parsing for
+  both known and unrecognised purpose phrases, and the no-accounts-found
+  warning path. The analytics engine's internal anomaly detection and
+  the generic fallback parser still don't have coverage — this is a
+  starting point, not a finished suite.
 - **All three phases of the auditor/dispute-engine work are in place** —
   see [§ Statutory dispute tools](#statutory-dispute-tools) for the
   notice-of-correction template, envelope-ready PDF export, and
@@ -527,7 +541,7 @@ with a short reference **glued directly onto its first line**, no
 space:
 
 ```
-C12MR OLA TAYO, 73, ROBINIA AVENUE, ... DA11 9QFDate of Birth:10/10/1971
+C12MR JORDAN SMITH, 12, SAMPLE STREET, LEEDS, LS1 4ABDate of Birth:14/03/1988
 ```
 
 That's the reliable anchor. The parser splits the whole document into
@@ -648,22 +662,78 @@ best-effort (the first account block that recorded one — Equifax's
 Personal Information section only prints the applicant's *addresses*,
 not their DOB, unlike Experian's Application Details block).
 
-### TransUnion / anything unrecognised (`genericFallbackParser.ts`)
+### TransUnion (`transunionParser.ts`)
 
-No dedicated block parser exists for TransUnion yet (no real sample to
-validate against — see the top-level warning). This scans line by
-line for default/arrears/CCJ/search keywords near a date and a
-£-amount, and seeds "shaped" account rows from lines that look like
-`Lender name ... £amount ... date`. It's intentionally conservative
-and will under-extract compared to the Experian and Equifax parsers;
-every report parsed this way carries a warning saying so.
+Built and cross-checked against the real `pdf-parse` text extracted
+from a real 189-page TransUnion "My Credit Report" export, the same
+rigor as the Experian and Equifax parsers. TransUnion's layout is a
+long-form report (Personal Information, Financial Account Information
+split into Credit cards / Personal loans and mortgages / Other
+accounts / Closed accounts, Searches, Address Links, Public
+Information) that shares Equifax's glued-label problem — every field
+is `LabelValue` with no separator (`Account numberXXXXXXXXXXXXXXXX3139`,
+`Opening balance£1,309`) — plus one problem Equifax's real sample
+didn't have: each account's own summary row glues its organisation
+name, balance, update date and status together with no separator
+either (`Newday LTD (Aqua)£25131 Aug 2026Up to date`), and the monthly
+Status/Balance/Limit/Statement/Payment history grids glue every
+month's figures into one digit string with no column width to split
+on (e.g. nine months' balances as `659609559509459…`).
 
-**To upgrade TransUnion to a real parser:** get a sample export, find
-its equivalent of the "glued block reference" (or whatever its actual
-delimiter is), and write a new file mirroring `experianParser.ts` or
-`equifaxParser.ts`'s structure — split into blocks, extract labels per
-block type, return a `ParsedReport`. Swap the one-line delegation in
-`transunionParser.ts` for the new function.
+What it covers:
+
+- **Personal Information** — name, date of birth (its own
+  "Month D, YYYY" format, distinct from the `DD/MM/YYYY` used
+  everywhere else on the report) and current address.
+- **Accounts across all four category subsections**, parsed as one
+  continuous stream rather than four separate section parsers — a
+  category heading (e.g. "Other accounts") can land in the middle of
+  an account's own block due to a PDF page break, so block-splitting
+  doesn't track "current category" state at all; it isn't needed,
+  since account classification doesn't depend on category. Each
+  account's organisation name is read from an inline prefix on its
+  summary row when present, otherwise derived from the 1–2 lines
+  immediately before it (filtering out section headings, table
+  headers, and long descriptive prose a rolling window can pick up).
+  Only the account's own labelled fields — opening balance, default
+  balance, opened/default/end dates, account number, linked address,
+  recorded name/DOB — are extracted with confidence; the summary
+  row's own balance and update-date figures are deliberately **not**
+  extracted, because they're glued together with no reliable way to
+  tell where one figure ends and the other begins (see the file
+  comment in `transunionParser.ts` for a worked example of why a
+  regex-based split there would risk being silently wrong).
+- **Judgments** (Public Information section) — a clean, reliably
+  structured table for County Court Judgments (case reference, court
+  name, judgment date, amount, notice-of-dispute flag,
+  active/satisfied status and satisfaction date). The other categories
+  TransUnion's own section intro names (Decree, Administration Order,
+  Bankruptcy, Individual Voluntary Arrangement, Trust Deed) are
+  included in the row-matching pattern on the strength of that intro
+  text alone — none were seen populated on the real sample — and a row
+  that doesn't match any known type layout falls back to the same
+  conservative keyword-scan-with-warning approach Equifax's
+  court-records section uses.
+- **Searches** — read via a state machine keyed on the report's own
+  `Input address` / `Application type(Sole|Joint)` anchors, against a
+  closed set of purpose phrases actually seen on the real sample
+  ("Consumer Credit File Request", "Credit Application", "Identity
+  Check for Credit", "Insurance Quotation", "Quotation Search"). A row
+  using a purpose phrase outside that set still gets a best-effort
+  date extraction rather than being dropped. Unlike Equifax and
+  Experian, TransUnion's own report makes no hard/soft distinction for
+  searches, so `ParsedEvent.detail` doesn't fabricate one.
+- **Address link history** — a clean, deduplicated numbered list, read
+  in preference to reconstructing addresses from the individual
+  From/To/Source link records (which repeat the same addresses many
+  times over).
+
+What it deliberately doesn't parse: the monthly Status/Balance/Limit/
+Statement/Payment history grids (every account's `statusHistory` is
+always empty, with a one-time warning explaining why — see the file
+comment), and a summary row's own balance/update-date figures (see
+above). Neither is guessed at, in line with every other parser in this
+codebase.
 
 ## Analytics engine
 
@@ -680,7 +750,7 @@ run once at upload time (`reportPersistence.ts`) and persisted as
   - **DOB/name mismatch** — compares the applicant's own details
     (from "Application Details") against the name/DOB recorded on
     *each individual account and event block*. Name comparison is
-    token-set-based (`{"TAYO","OLAOYE"}` vs `{"OLAOYE","TAYO"}` is a
+    token-set-based (`{"SMITH","JORDAN"}` vs `{"JORDAN","SMITH"}` is a
     match — word order doesn't matter) so it only flags genuinely
     different names, not reordering.
   - **Mixed-file risk** — a composite flag: fires only when a DOB
@@ -717,20 +787,30 @@ run once at upload time (`reportPersistence.ts`) and persisted as
 ## Extending this
 
 - **Add OAuth**: see the comment at the bottom of `auth.controller.ts`.
-- **Add a real TransUnion parser**: see § Parsing engine above —
-  Equifax now has one too, built the same way, so `equifaxParser.ts` is
-  a second worked example alongside `experianParser.ts` to follow.
-- **Add real Equifax court-judgment parsing**: the sample this was
-  built from had no CCJs on it, so `parseCourtRecordsSection()` in
-  `equifaxParser.ts` currently falls back to a keyword scan rather than
-  a dedicated table parser — get a sample report containing one and
-  extend it the same way `experianParser.ts`'s `parseJudgmentBlock()`
-  works.
-- **Extend the test suite**: `experianParser.test.ts` and
-  `equifaxParser.test.ts` cover those two block parsers; the analytics
-  engine (`riskSummary.ts`, `anomalyDetection.ts`, `negativeMarkers.ts`)
-  and the CSV/generic parsers are still untested — same fixture-based
-  approach, synthetic data only.
+- **Confirm Equifax and TransUnion's court-judgment table shapes
+  against a real populated sample**: both parsers' structured
+  Label/Value CCJ tables (`parseCourtRecordsSection()` in
+  `equifaxParser.ts`, `parseJudgmentsSection()` in
+  `transunionParser.ts`) were written from each bureau's own
+  documented category names rather than a real sample containing a
+  judgment, so both still carry a warning even on a clean parse — get
+  a sample report with a real CCJ on it and drop the warning once the
+  shape is confirmed (or fix it, if it turns out to differ).
+- **Add real TransUnion monthly payment-history parsing**: the
+  Status/Balance/Limit/Statement/Payment grids glue every month's
+  figures into one digit string with no separator or reliable column
+  width (see § Parsing engine), so `transunionParser.ts` doesn't
+  attempt it. If a future export turns out to have a splittable
+  layout (a monospaced/positional PDF extraction instead of
+  `pdf-parse`'s plain text, for instance), extend it the way
+  `equifaxParser.ts`'s `extractPaymentHistory()` handles Equifax's own
+  (unglued) grid.
+- **Extend the test suite**: `experianParser.test.ts`,
+  `equifaxParser.test.ts` and `transunionParser.test.ts` cover those
+  three block parsers; the analytics engine (`riskSummary.ts`,
+  `anomalyDetection.ts`, `negativeMarkers.ts`) and the CSV/generic
+  parsers are still untested — same fixture-based approach, synthetic
+  data only.
 - **Generate real Prisma migrations**: see the note in § Status and
   scope — this repo was built in a network-restricted sandbox that
   couldn't reach `binaries.prisma.sh`, so the schema is synced with

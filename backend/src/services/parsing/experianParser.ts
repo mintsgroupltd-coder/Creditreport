@@ -16,7 +16,7 @@ import { classifyAccountStatus, parseMoney, toLines, ukDateToIso } from "./share
  * short reference glued to the front of its first line — "C12", "J1",
  * "P4", "E2", "B7" — with no separating space, e.g.:
  *
- *   C12MR OLA TAYO, 73, ROBINIA AVENUE, ... DA11 9QFDate of Birth:10/10/1971
+ *   C12MR JORDAN SMITH, 12, SAMPLE STREET, LEEDS, LS1 4ABDate of Birth:14/03/1988
  *
  * That reference is the reliable anchor: we split the whole document
  * into blocks on lines that *start* with one of those reference
@@ -26,7 +26,7 @@ import { classifyAccountStatus, parseMoney, toLines, ukDateToIso } from "./share
  */
 
 // No \b after the digits: the ref is glued directly onto the name that
-// follows ("C1MR OLA TAYO...") with no separator, and \b never fires
+// follows ("C1MR JORDAN SMITH...") with no separator, and \b never fires
 // between two word characters (a digit and a letter both count), so it
 // would silently fail to match every real block header.
 const BLOCK_START = /^(C|J|P|E|B)(\d{1,4})(?=[A-Z])/;
@@ -74,7 +74,7 @@ interface NameAddressDob {
   recordedDob?: string;
 }
 
-/** "MR OLA TAYO, 73, ROBINIA AVENUE, ... DA11 9QFDate of Birth:10/10/1971" -> parts */
+/** "MR JORDAN SMITH, 12, SAMPLE STREET, LEEDS, LS1 4ABDate of Birth:14/03/1988" -> parts */
 function parseNameAddressDob(headerLine: string): NameAddressDob {
   const dobMatch = headerLine.match(/Date of Birth:(\d{2}\/\d{2}\/\d{4})/);
   const withoutDob = headerLine.replace(/Date of Birth:\d{2}\/\d{2}\/\d{4}/, "").trim();

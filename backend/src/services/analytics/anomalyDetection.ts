@@ -2,7 +2,7 @@ import { ParsedAccount, ParsedReport } from "../parsing/types";
 import { normalizeLenderName } from "../parsing/shared";
 import { AlertFinding } from "./types";
 
-/** "OLAOYE TAYO" -> Set{"OLAOYE","TAYO"} — order-insensitive so "TAYO OLAOYE" doesn't false-positive.
+/** "JORDAN SMITH" -> Set{"JORDAN","SMITH"} — order-insensitive so "SMITH JORDAN" doesn't false-positive.
  * Exported so identityCheck.ts can compare a report's self-reported
  * applicant name against the user's own confirmed profile name using
  * the exact same matching rule, rather than a second, possibly

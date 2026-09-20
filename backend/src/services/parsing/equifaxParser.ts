@@ -302,13 +302,13 @@ function parseAddressSection(personalInfoText: string): ParsedAddress[] {
 const SEARCH_HEADER = /^(\d{2}\/\d{2}\/\d{4})(.+)$/;
 // The data row glues the consumer's own name onto their DOB (or "N/A") onto
 // the search type onto the Yes/No joint-application flag with no separator
-// anywhere, e.g. "TAYOOLAOYE10/10/1979Credit ApplicationNo" — we don't need
+// anywhere, e.g. "OKONKWOCASEY05/07/1985Credit ApplicationNo" — we don't need
 // the name, so we anchor on the DOB-or-N/A token and take everything after
 // it up to the trailing Yes/No.
 const SEARCH_ROW = /(?:\d{2}\/\d{2}\/\d{4}|N\/A)([A-Za-z /]*?)(Yes|No)\s*$/;
 
 /**
- * Each search entry's actual data row ("TAYOOLAOYE10/10/1979Credit
+ * Each search entry's actual data row ("OKONKWOCASEY05/07/1985Credit
  * ApplicationNo") is always its own physical line, but it's followed by an
  * unbounded amount of unrelated boilerplate before the next entry (address-
  * context sub-headings, "No data present" filler for empty groupings) — so
